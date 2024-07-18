@@ -28,13 +28,15 @@ SECRET_KEY="your_secret_key_here"
 ALGORITHM="HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES=790
 DB_PATH="path_to_your_database.db"
-ADMIN_PASSWORD="123"
-LOG_FILEPATH="./logs/"
-MEMORY_COST=65536
-PARALLELISM=2
-HASH_LENGTH=32
-SALT_LENGTH=16
-
+admin_paswd="123"
+log_filepath="./logs/"
+memory_cost=35555
+parallelism=1
+hash_len=322
+salt_len=16
+time_cost=4
+salt=""
+pepper=""
 ```
 
 - `SECRET_KEY:` Your secret key for encoding JWT tokens.
@@ -44,6 +46,8 @@ SALT_LENGTH=16
 - `ADMIN_PASSWORD:` Default password for the admin user.
 - `LOG_FILEPATH:` Path for log file storage.
 - “`MEMORY_COST`, `PARALLELISM`, `HASH_LENGTH`, `SALT_LENGTH`: Parameters for Argon2 config”
+- `SALT:` additional to secure password
+- `PEPPER` additional to secure password
 ## Database Setup
 Ensure your database schema is set up correctly. This application assumes you have a users table with the following columns:
 
