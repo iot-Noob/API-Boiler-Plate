@@ -1,12 +1,13 @@
 # FastAPI Authentication Example
 
-This project demonstrates how to use FastAPI with JWT for authentication and bcrypt for password hashing. The application includes endpoints for user login, signup, account update, and account deletion. 
+This project demonstrates how to use FastAPI with JWT for authentication and Argon2 for password hashing. The application includes endpoints for user login, signup, account update, and account deletion.
 
 ## Prerequisites
 
 - Python 3.7+
 - FastAPI
 - Uvicorn
+- Argon2
 - Bcrypt
 - JWT
 - SQLite (or any other database supported by your `RunQuery` function)
@@ -18,7 +19,7 @@ This project demonstrates how to use FastAPI with JWT for authentication and bcr
    Ensure you have all necessary dependencies installed:
 
 ```bash
-   pip install fastapi uvicorn bcrypt python-jose
+ pip install fastapi uvicorn argon2-cffi python-jose python-dotenv
 ```
 ## 2. Create a .env file
 
@@ -29,6 +30,11 @@ ACCESS_TOKEN_EXPIRE_MINUTES=790
 DB_PATH="path_to_your_database.db"
 ADMIN_PASSWORD="123"
 LOG_FILEPATH="./logs/"
+MEMORY_COST=65536
+PARALLELISM=2
+HASH_LENGTH=32
+SALT_LENGTH=16
+
 ```
 
 - `SECRET_KEY:` Your secret key for encoding JWT tokens.
@@ -37,6 +43,7 @@ LOG_FILEPATH="./logs/"
 - `DB_PATH:` Path to your database file.
 - `ADMIN_PASSWORD:` Default password for the admin user.
 - `LOG_FILEPATH:` Path for log file storage.
+- “`MEMORY_COST`, `PARALLELISM`, `HASH_LENGTH`, `SALT_LENGTH`: Parameters for Argon2 config”
 ## Database Setup
 Ensure your database schema is set up correctly. This application assumes you have a users table with the following columns:
 

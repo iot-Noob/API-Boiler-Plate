@@ -1,25 +1,37 @@
 from datetime import datetime, timedelta, timezone
 import jwt
- 
+from argon2 import PasswordHasher
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
 from passlib.context import CryptContext
 from fastapi.security import HTTPBearer
 from App.RunQuery import RunQuery
 
-from App.GetEnvDate import key, algo, exptime
+from App.GetEnvDate import key, algo, exptime,memcost,parallelism,hashlength,salt_length 
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Set default values if the configuration values are None
+default_memcost = 65536  # Example default value
+default_parallelism = 2  # Example default value
+default_hashlength = 32  # Example default value
+default_salt_length = 16  # Example default value
+
+pwd_context = PasswordHasher(
+    memory_cost=int(memcost) if memcost is not None else default_memcost,
+    parallelism=int(parallelism) if parallelism is not None else default_parallelism,
+    hash_len=int(hashlength) if hashlength is not None else default_hashlength,
+    salt_len=int(salt_length) if salt_length is not None else default_salt_length
+    
+)
 
 oauth2_scheme = HTTPBearer()
 
 
 async def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+    return pwd_context.verify(hash=hashed_password,password=plain_password)
 
 
 async def get_password_hash(password):
-    return pwd_context.hash(password)
+    return pwd_context.hash(password=password)
 
 
 async def get_user(username: str):
@@ -110,7 +122,6 @@ async def authenticte_token(token):
         ueq = await RunQuery(
             q="""SELECT id, disabled FROM users WHERE id=?""", val=(token["id"],)
         )
-        return ueq
         if not ueq:
             raise HTTPException(
                 status_code=404, detail="Invalid token: user does not exist"

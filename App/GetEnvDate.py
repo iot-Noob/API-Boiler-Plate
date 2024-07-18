@@ -13,4 +13,10 @@ try:
 except Exception as e:
     print(f"Error occur load env file in secutiry due to {e}")
 log_path = os.getenv("log_filepath")
- 
+
+
+#load Argon2 config
+memcost=os.getenv("memory_cost")
+parallelism=os.getenv("parallelism")
+hashlength=os.getenv("hash_len")
+salt_length=os.getenv("salt_len")
