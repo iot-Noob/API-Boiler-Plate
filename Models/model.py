@@ -3,9 +3,8 @@ from pydantic import BaseModel, EmailStr, validator
 from fastapi import HTTPException
 import sqlite3
 import re
-import asyncio
-from App.RunQuery import RunQuery
-
+import os
+from App.GetEnvDate import db_path,db_name
 
 class User(BaseModel):
     name: str
@@ -16,7 +15,19 @@ class User(BaseModel):
 
     @validator("name")
     def name_must_be_unique(cls, v):
-        con = sqlite3.connect("vid_conv_data.db")
+        
+        if db_name and db_path:
+            if not os.path.exists(ffp):
+                os.makedirs(db_path,exist_ok=True)
+            ffp=os.path.join(db_path,db_name)
+            con = sqlite3.connect(ffp)
+
+        elif db_name:
+            con = sqlite3.connect(str(db_name))
+        elif not db_path and not db_name or not db_name or not db_path:
+            con = sqlite3.connect("databases.db")
+        else:
+            return HTTPException(400,"No db path define for sqlite")
         cur = con.cursor()
         cur.execute("SELECT COUNT(*) FROM users WHERE name = ?", (v,))
         if cur.fetchone()[0] > 0:
