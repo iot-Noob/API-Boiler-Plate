@@ -41,4 +41,7 @@ class DatabaseManager:
         elif db_name:
             self.path = db_name
         else:
-            self.path = "talha_db.db"
+            if db_path:
+                self.path=os.path.join(db_path,"talha_db.db")
+            else:
+                self.path = "talha_db.db"
