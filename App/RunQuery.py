@@ -14,7 +14,12 @@ async def RunQuery(
         db.connect_db()
         connect=db.get_connect()
         cursor=db.get_cursor()
-      
+        if exec_om:
+            cursor.executemany(q,val)
+            connect.commit()
+        else:
+            cursor.execute(q,val)
+            connect.commit()
         result = None
         match fetch_om:
             case "ALL":
@@ -26,7 +31,8 @@ async def RunQuery(
             case _:
                 raise ValueError("Invalid fetch_om value")
 
-        connect.commit()
+       
+        
         return result
 
     except Exception as e:
@@ -35,6 +41,6 @@ async def RunQuery(
         )
 
     finally:
+        
         db.close_connection()
-        # cursor.close()
-        # connect.close()
+    
