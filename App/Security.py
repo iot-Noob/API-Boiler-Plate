@@ -110,7 +110,6 @@ async def authenticte_token(token):
         ueq = await RunQuery(
             q="""SELECT id, disabled FROM users WHERE id=?""", val=(token["id"],)
         )
-        return ueq
         if not ueq:
             raise HTTPException(
                 status_code=404, detail="Invalid token: user does not exist"
