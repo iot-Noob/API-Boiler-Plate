@@ -16,11 +16,12 @@ log_path = os.getenv("log_filepath")
 
 
 #load Argon2 config
-memcost=os.getenv("memory_cost")
-parallelism=os.getenv("parallelism")
-hashlength=os.getenv("hash_len")
-salt_length=os.getenv("salt_len")
+memcost=os.getenv("memory_costs")
+parallelism=os.getenv("pararellisms")
+hashlength=os.getenv("hash_length")
+salt_length=os.getenv("salt_length")
 db_path=os.getenv("database_paths")
 db_name=os.getenv("database_names")
 
-print(db_name,db_path)
+print(f"memcost:::{memcost} pararellism:::{parallelism} hashlen::{hashlength} salt_len:::{salt_length}")
+

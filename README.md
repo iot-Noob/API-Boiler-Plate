@@ -30,10 +30,10 @@ databases_path="path_to_your_database.db"
 databases_name="tallha_database.db"
 admin_paswd="123"
 log_filepath="./logs/"
-memory_cost=35555
-parallelism=1
-hash_len=322
-salt_len=16
+memory_costs=35555
+pararellisms=1
+hash_length=322
+salt_length=16
 time_cost=4
 salt=""
 pepper=""
@@ -46,7 +46,7 @@ pepper=""
 - `databases_name:` Name to your database file like test.db for sqlite3. e.g. `talha.db`
 - `ADMIN_PASSWORD:` Default password for the admin user.
 - `LOG_FILEPATH:` Path for log file storage.
-- “`MEMORY_COST`, `PARALLELISM`, `HASH_LENGTH`, `SALT_LENGTH`: Parameters for Argon2 config”
+- “`memory_costs`, `pararellisms`, `hash_length`, `salt_length`: Parameters for Argon2 config”
 - `SALT:` additional to secure password
 - `PEPPER` additional to secure password
 ## Database Setup
