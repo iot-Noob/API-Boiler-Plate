@@ -26,8 +26,8 @@ This project demonstrates how to use FastAPI with JWT for authentication and Arg
 SECRET_KEY="your_secret_key_here"
 ALGORITHM="HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES=790
-DB_PATH="path_to_your_database.db" 
-DB_NAME="tallha_database.db"
+databases_path="path_to_your_database.db" 
+databases_name="tallha_database.db"
 admin_paswd="123"
 log_filepath="./logs/"
 memory_cost=35555
@@ -42,8 +42,8 @@ pepper=""
 - `SECRET_KEY:` Your secret key for encoding JWT tokens.
 - `ALGORITHM:` The algorithm used for encoding JWT tokens.
 - `ACCESS_TOKEN_EXPIRE_MINUTES:1 The expiration time for access     tokens in minutes.
-- `DB_PATH:` Path to your database file.
-- `DB_NAME:` Name to your database file like test.db for sqlite3.
+- `databases_path:` Path to your database file.
+- `databases_name:` Name to your database file like test.db for sqlite3. e.g. `talha.db`
 - `ADMIN_PASSWORD:` Default password for the admin user.
 - `LOG_FILEPATH:` Path for log file storage.
 - “`MEMORY_COST`, `PARALLELISM`, `HASH_LENGTH`, `SALT_LENGTH`: Parameters for Argon2 config”

@@ -1,46 +1,32 @@
 import sqlite3
-from fastapi import HTTPException
-import dotenv
+from fastapi import HTTPException 
 import os
-from App.GetEnvDate import db_path,db_name
+from App.CreateDatabase import  DatabaseManager
 
-if not os.path.exists(db_path) and db_path:
-    os.mkdir(db_path)
-
+ 
+db=DatabaseManager()
+ 
 async def RunQuery(
     q: str, val: tuple, fetch_om: str = "ONE", exec_om: bool = False
 ) -> tuple:
-    try:
-        # Establish the database connection\
-        if db_name and db_path:
-            ffp=os.path.join(db_path,db_name)
-            con = sqlite3.connect(ffp)
-
-        elif db_name:
-            con = sqlite3.connect(str(db_name))
-        elif not db_path and not db_name or not db_name or not db_path:
-            con = sqlite3.connect("databases.db")
-        else:
-            return HTTPException(400,"No db path define for sqlite")
-        cur = con.cursor()
-
-        if exec_om:
-            cur.executemany(q, val)
-        else:
-            cur.execute(q, val)
-
+    
+    try: 
+        db.connect_db()
+        connect=db.get_connect()
+        cursor=db.get_cursor()
+      
         result = None
         match fetch_om:
             case "ALL":
-                result = cur.fetchall()
+                result = cursor.fetchall()
             case "MANY":
-                result = cur.fetchmany()
+                result = cursor.fetchmany()
             case "ONE":
-                result = cur.fetchone()
+                result = cursor.fetchone()
             case _:
                 raise ValueError("Invalid fetch_om value")
 
-        con.commit()
+        connect.commit()
         return result
 
     except Exception as e:
@@ -49,5 +35,6 @@ async def RunQuery(
         )
 
     finally:
-        cur.close()
-        con.close()
+        db.close_connection()
+        # cursor.close()
+        # connect.close()
