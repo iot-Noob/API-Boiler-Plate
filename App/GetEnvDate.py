@@ -14,3 +14,6 @@ except Exception as e:
     print(f"Error occur load env file in secutiry due to {e}")
 log_path = os.getenv("log_filepath")
  
+db_path=os.getenv("database_path")
+db_name=os.getenv("database_name")
+ 

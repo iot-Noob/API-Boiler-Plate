@@ -1,40 +1,32 @@
 import sqlite3
-from fastapi import HTTPException
-import dotenv
+from fastapi import HTTPException 
 import os
+from App.CreateDatabase import  DatabaseManager
 
-dotenv.load_dotenv()
-dbpath = os.getenv("DB_PATH")
-
-
+ 
+db=DatabaseManager()
+ 
 async def RunQuery(
     q: str, val: tuple, fetch_om: str = "ONE", exec_om: bool = False
 ) -> tuple:
-    try:
-        # Establish the database connection
-        if not dbpath:
-            con = sqlite3.connect("vid_conv_data.db")
-        else:
-            con = sqlite3.connect(dbpath)
-        cur = con.cursor()
-
-        if exec_om:
-            cur.executemany(q, val)
-        else:
-            cur.execute(q, val)
-
+    
+    try: 
+        db.connect_db()
+        connect=db.get_connect()
+        cursor=db.get_cursor()
+      
         result = None
         match fetch_om:
             case "ALL":
-                result = cur.fetchall()
+                result = cursor.fetchall()
             case "MANY":
-                result = cur.fetchmany()
+                result = cursor.fetchmany()
             case "ONE":
-                result = cur.fetchone()
+                result = cursor.fetchone()
             case _:
                 raise ValueError("Invalid fetch_om value")
 
-        con.commit()
+        connect.commit()
         return result
 
     except Exception as e:
@@ -43,5 +35,6 @@ async def RunQuery(
         )
 
     finally:
-        cur.close()
-        con.close()
+        db.close_connection()
+        # cursor.close()
+        # connect.close()

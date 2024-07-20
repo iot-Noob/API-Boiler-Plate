@@ -26,15 +26,18 @@ This project demonstrates how to use FastAPI with JWT for authentication and bcr
 SECRET_KEY="your_secret_key_here"
 ALGORITHM="HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES=790
-DB_PATH="path_to_your_database.db"
+database_path="path_to_your_database.db"
+database_name="testdb.db"
 ADMIN_PASSWORD="123"
 LOG_FILEPATH="./logs/"
+
 ```
 
 - `SECRET_KEY:` Your secret key for encoding JWT tokens.
 - `ALGORITHM:` The algorithm used for encoding JWT tokens.
 - `ACCESS_TOKEN_EXPIRE_MINUTES:1 The expiration time for access     tokens in minutes.
-- `DB_PATH:` Path to your database file.
+- `database_path:` Path to your database file.
+- `database_name:` define name of your database liee `test.db`
 - `ADMIN_PASSWORD:` Default password for the admin user.
 - `LOG_FILEPATH:` Path for log file storage.
 ## Database Setup
