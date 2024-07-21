@@ -63,7 +63,7 @@ async def create_access_token(data: dict, expires_delta: timedelta | None = None
             expire_minutes = int(exptime)  # Ensure exptime is an integer
         except ValueError:
             expire_minutes = (
-                15  # Default to 15 minutes if exptime is not a valid integer
+                1320 
             )
         expire = datetime.now(timezone.utc) + timedelta(minutes=expire_minutes)
 
@@ -122,6 +122,7 @@ async def authenticte_token(token):
         ueq = await RunQuery(
             q="""SELECT id, disabled FROM users WHERE id=?""", val=(token["id"],)
         )
+       
         if not ueq:
             raise HTTPException(
                 status_code=404, detail="Invalid token: user does not exist"
