@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query,Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse,StreamingResponse
  
 from App.Security import *
 from Models.model import *
@@ -11,3 +11,6 @@ import asyncio
  
 from typing import Optional
 import logging
+import pyotp
+import qrcode
+from io import BytesIO

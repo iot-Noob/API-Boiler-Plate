@@ -1,5 +1,5 @@
 from App.LIbraryImport import *
-from App.GetEnvDate import dap 
+from App.GetEnvDate import dap
 from App.LoggingInit import *
 from App.DeleteTables import *
 
@@ -241,4 +241,53 @@ async def delete_account(
 
  
 
- 
+@Route.get("/generate_tfa_key", tags=['2FA'])
+async def get_2fa(token:str=Depends(get_current_user)):
+    try:
+        vtoken = await authenticte_token(token=token)
+        if not vtoken:
+            return HTTPException(400,f"cant verify code for account that is not vaild token invalid")
+        secret = await generate_secret()
+        result = await generate_qr_code(secret=secret, app_name="talha", company_name="test")
+        
+        qr_code_bytes = result["qr"]
+        response_headers = {
+            "X-2FA-Key": result["key"]
+        }
+        return StreamingResponse(BytesIO(qr_code_bytes), media_type="image/png", headers={
+            "Content-Disposition": "inline; filename=qrcode.png",
+            **response_headers
+        })
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    
+@Route.post("/verify_code", tags=['2FA'])
+async def verify_code( code: TfaAuth, skey: str = Query(...),token:str=Depends(get_current_user)):
+    try:
+        vtoken = await authenticte_token(token=token)
+        if not vtoken:
+            return HTTPException(400,f"cant verify code for account that is not vaild token invalid")
+        secret_key=await extract_secret_from_uri(skey)
+        utfak=await RunQuery(q="SELECT tfa_key FROM users WHERE id=?",val=(token["id"],))
+
+        
+
+        verify_code_result = await verify_2fa_code(secret_key if not utfak else utfak[0], code.code)
+  
+        if verify_code_result:
+            if not utfak[0]:
+                uu=await RunQuery(q="""
+                                UPDATE users
+                                SET tfa_key = ?
+                                WHERE id =?
+                                """,val=(secret_key,token["id"]))
+                return{"Add 2FA sucess":uu if uu else ""}
+            else:
+                return HTTPException(200,"Already register your 2FA Code")
+                    
+        else:
+            return HTTPException(400,"Code invalid or expire try again")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

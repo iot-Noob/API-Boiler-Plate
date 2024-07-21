@@ -6,8 +6,16 @@ from fastapi import Depends, HTTPException, status
 from passlib.context import CryptContext
 from fastapi.security import HTTPBearer
 from App.RunQuery import RunQuery
-
+import pyotp
+import qrcode
+from io import BytesIO
 from App.GetEnvDate import key, algo, exptime,memcost,parallelism,hashlength,salt_length 
+from typing import Dict, Union,List
+from urllib.parse import urlparse, parse_qs
+from fastapi import HTTPException, Query
+from App.LoggingInit import *
+
+ 
 
 # Set default values if the configuration values are None
 default_memcost = 65536  # Example default value
@@ -32,7 +40,6 @@ async def verify_password(plain_password, hashed_password):
 
 async def get_password_hash(password):
     return pwd_context.hash(password=password)
-
 
 async def get_user(username: str):
     try:
@@ -140,7 +147,7 @@ async def authenticte_token(token):
 
     except HTTPException as http_exc:
         raise http_exc
-
+    
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Token validation error: {e}")
  
@@ -149,6 +156,47 @@ async def get_user_role(token: str | None = None):
     return await RunQuery(
         q=""" SELECT user_role FROM users WHERE id = ?""", val=(token["id"],)
     )
+ 
+ 
+ ### 2FA 
+async def generate_secret():
+    try:
+        secret = pyotp.random_base32()
+        return secret
+    except Exception as e:
+        return HTTPException(500,f"Canot generate secret due to {e}")
+
+async def generate_qr_code(secret: str, app_name: str, company_name: str) -> Dict[str, Union[bytes, str]]:
+    try:
+        """Generate a QR code and return it as a dictionary with the QR code image bytes and provisioning URI."""
+        totp = pyotp.TOTP(secret)
+        uri = totp.provisioning_uri(name=app_name, issuer_name=company_name)
+        qr = qrcode.make(uri)
+        
+        buffer = BytesIO()
+        qr.save(buffer, format='PNG')
+        buffer.seek(0)
+        
+        return {"qr": buffer.getvalue(), "key": uri}
+    except Exception as e:
+        logging.error(f"Error generate QR due to {e}")
+        return HTTPException(400,f"Error generate wr due to {e}")
 
 
  
+
+async def verify_2fa_code(secret, code):
+    totp = pyotp.TOTP(secret)
+    return totp.verify(code)
+
+async def extract_secret_from_uri(uri: str) -> str:
+    try:
+        """Extract the secret key from a TOTP provisioning URI."""
+        parsed_uri = urlparse(uri)
+        query_params = parse_qs(parsed_uri.query)
+        secret = query_params.get('secret', [None])[0]
+        return secret
+    except Exception as e:
+        logging.error(f"Error verify 2fa due to {e}")
+        return HTTPException(400,f"Error canot extract secret key due to {e}")
+
