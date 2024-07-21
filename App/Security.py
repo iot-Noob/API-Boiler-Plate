@@ -44,7 +44,7 @@ async def get_password_hash(password):
 async def get_user(username: str):
     try:
         user = await RunQuery(
-            q=""" SELECT name,password,id FROM users WHERE name= ?""", val=(username,)
+            q=""" SELECT name,password,id,tfa_key FROM users WHERE name= ?""", val=(username,)
         )
         return user
     except Exception as e:

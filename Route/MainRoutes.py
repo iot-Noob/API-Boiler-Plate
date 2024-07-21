@@ -62,10 +62,18 @@ async def start():
 @Route.post(
     "/login", tags=["Auth User"], description="Login account with username and password"
 )
-async def login(username: str = Query(...), password: str = Query(...)):
+async def login(username: str = Query(...), password: str = Query(...),code:str|None=None):
     user_data = await authenticate_user(username=username, password=password)
 
     if user_data:
+        if user_data[3]:
+            sk=user_data[3]
+            if code is None:
+                return HTTPException(400,"2FA code is requirew wehn its active")
+            else:
+                vc=await verify_2fa_code(sk,code)
+                if not vc:
+                    return HTTPException(500,"Code is invalid or expire")
 
         access_token = await create_access_token(
             data={"sub": user_data[0], "user_id": user_data[2]}
@@ -245,6 +253,9 @@ async def delete_account(
 async def get_2fa(token:str=Depends(get_current_user)):
     try:
         vtoken = await authenticte_token(token=token)
+        ad=await RunQuery(q="""SELECT disabled FROM users WHERE id=? """,val=(token["id"],))
+        if ad:
+            return HTTPException(400,"Account is disabled canot proceed")
         if not vtoken:
             return HTTPException(400,f"cant verify code for account that is not vaild token invalid")
         secret = await generate_secret()
@@ -266,6 +277,9 @@ async def get_2fa(token:str=Depends(get_current_user)):
 @Route.post("/verify_code", tags=['2FA'])
 async def verify_code( code: TfaAuth, skey: str = Query(...),token:str=Depends(get_current_user)):
     try:
+        ad=await RunQuery(q="""SELECT disabled FROM users WHERE id=? """,val=(token["id"],))
+        if ad:
+            return HTTPException(400,"Account is disabled canot proceed")
         vtoken = await authenticte_token(token=token)
         if not vtoken:
             return HTTPException(400,f"cant verify code for account that is not vaild token invalid")
