@@ -1,8 +1,8 @@
 from App.LIbraryImport import *
-from App.GetEnvDate import dap
+from App.GetEnvDate import dap,company_name,app_name
 from App.LoggingInit import *
 from App.DeleteTables import *
-
+from App.RunQuery import db
 Route = APIRouter()
 
 
@@ -56,7 +56,12 @@ async def start():
 
 ##AUTH USER
 
- 
+@Route.on_event("shutdown")
+async def shutdown_event():
+    logging.info("API is shutitng down....")
+    db.close_connection()
+    print("Shutting down...")
+  
 
 
 @Route.post(
@@ -246,25 +251,31 @@ async def delete_account(
         else:
             await delete_user_records(token=token, id=None)
     return HTTPException(200, f"Account delete sucess!!  ")
-
  
 
 @Route.get("/generate_tfa_key", tags=['2FA'])
 async def get_2fa(token:str=Depends(get_current_user)):
     try:
         vtoken = await authenticte_token(token=token)
-        ad=await RunQuery(q="""SELECT disabled FROM users WHERE id=? """,val=(token["id"],))
-        if ad:
+        ad=await RunQuery(q="""SELECT disabled,name,uri FROM users WHERE id=? """,val=(token["id"],))
+        if ad[0]:
             return HTTPException(400,"Account is disabled canot proceed")
         if not vtoken:
             return HTTPException(400,f"cant verify code for account that is not vaild token invalid")
         secret = await generate_secret()
-        result = await generate_qr_code(secret=secret, app_name="talha", company_name="test")
+        result = await generate_qr_code(secret=secret, app_name=f"{app_name if app_name else "test app"}:{ad[1]}", company_name=company_name if company_name else "Iot Noob Production")
         
         qr_code_bytes = result["qr"]
         response_headers = {
             "X-2FA-Key": result["key"]
         }
+        if not ad[2]:
+            uu=await RunQuery(q="""
+                                    UPDATE users
+                                    SET uri = ?
+                                    WHERE id =?
+                                    """,val=(result["key"],token["id"]))
+            logging.info("URI update sucess!!")
         return StreamingResponse(BytesIO(qr_code_bytes), media_type="image/png", headers={
             "Content-Disposition": "inline; filename=qrcode.png",
             **response_headers
@@ -275,21 +286,22 @@ async def get_2fa(token:str=Depends(get_current_user)):
     
     
 @Route.post("/verify_code", tags=['2FA'])
-async def verify_code( code: TfaAuth, skey: str = Query(...),token:str=Depends(get_current_user)):
+async def verify_code( code: TfaAuth, uri: str = Query(None,description="URI for verification"),token:str=Depends(get_current_user)):
     try:
-        ad=await RunQuery(q="""SELECT disabled FROM users WHERE id=? """,val=(token["id"],))
-        if ad:
+        ad=await RunQuery(q="""SELECT disabled,name,uri FROM users WHERE id=? """,val=(token["id"],))
+        
+        if ad[0]:
             return HTTPException(400,"Account is disabled canot proceed")
         vtoken = await authenticte_token(token=token)
         if not vtoken:
             return HTTPException(400,f"cant verify code for account that is not vaild token invalid")
-        secret_key=await extract_secret_from_uri(skey)
+        if not ad[2]:
+            if not uri:
+                return HTTPException(400,"URI is required ")
+        secret_key=await extract_secret_from_uri(uri if not ad[2] else ad[2])
+       
         utfak=await RunQuery(q="SELECT tfa_key FROM users WHERE id=?",val=(token["id"],))
-
-        
-
-        verify_code_result = await verify_2fa_code(secret_key if not utfak else utfak[0], code.code)
-  
+        verify_code_result = await verify_2fa_code(utfak[0] if utfak[0]  else secret_key, code.code)
         if verify_code_result:
             if not utfak[0]:
                 uu=await RunQuery(q="""
@@ -305,3 +317,21 @@ async def verify_code( code: TfaAuth, skey: str = Query(...),token:str=Depends(g
             return HTTPException(400,"Code invalid or expire try again")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+## In case user URI is lost and still login account
+@Route.get("/get_uri_code",tags=['2FA'],description="in case you are login but lost uri ")
+async def get_uri(token:str=Depends(get_current_user)):
+        vtoken = await authenticte_token(token=token)
+        ad=await RunQuery(q="""SELECT disabled FROM users WHERE id=? """,val=(token["id"],))
+
+        if ad[0]:
+            return HTTPException(400,"Account is disabled canot proceed")
+        if not vtoken:
+            return HTTPException(400,f"cant verify code for account that is not vaild token invalid")
+        guri = await RunQuery(q="SELECT uri FROM users WHERE id=?", val=(token["id"],))
+        qr_code_bytes=await qr_raw(guri[0])
+
+        return StreamingResponse(BytesIO(qr_code_bytes), media_type="image/png", headers={
+            "Content-Disposition": "inline; filename=qrcode.png"
+            
+        })
+ 

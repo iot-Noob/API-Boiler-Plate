@@ -1,6 +1,7 @@
 # FastAPI Authentication Example
+FastAPI Authentication Example
+This project demonstrates how to use FastAPI with JWT for authentication, Argon2 for password hashing, and Two-Factor Authentication (2FA) for enhanced security. The application includes endpoints for user login, signup, account update, and account deletion.
 
-This project demonstrates how to use FastAPI with JWT for authentication and Argon2 for password hashing. The application includes endpoints for user login, signup, account update, and account deletion.
 
 ## Prerequisites
 
@@ -10,7 +11,8 @@ This project demonstrates how to use FastAPI with JWT for authentication and Arg
 - Argon2
 - JWT
 - SQLite (or any other database supported by your `RunQuery` function)
-
+- `pyotp` for generating OTPs for 2FA
+- `qrcode` for generating QR codes for 2FA
 ## Setup
 
 1. **Install Dependencies**
@@ -18,7 +20,7 @@ This project demonstrates how to use FastAPI with JWT for authentication and Arg
    Ensure you have all necessary dependencies installed:
 
 ```bash
- pip install fastapi uvicorn argon2-cffi python-jose python-dotenv
+pip install fastapi uvicorn argon2-cffi python-jose python-dotenv pyotp qrcode
 ```
 ## 2. Create a .env file
 
@@ -37,6 +39,8 @@ salt_length=16
 time_cost=4
 salt=""
 pepper=""
+comp_names="Iot Noob"
+app_names="BoilerPlate FASTAPI "
 ```
 
 - `SECRET_KEY:` Your secret key for encoding JWT tokens.
@@ -49,6 +53,8 @@ pepper=""
 - “`memory_costs`, `pararellisms`, `hash_length`, `salt_length`: Parameters for Argon2 config”
 - `SALT:` additional to secure password
 - `PEPPER` additional to secure password
+- `comp_names` name of company for 2FA Authenticator
+- `app_names` name of application for 2fa
 ## Database Setup
 Ensure your database schema is set up correctly. This application assumes you have a users table with the following columns:
 
@@ -63,13 +69,29 @@ Ensure your database schema is set up correctly. This application assumes you ha
 ### Login
 - **URL:** `/login`
 **Method:** `POST`
-**Description:** `Login with username and password.`
+**Description:** `Login with username, password, and 2FA code (if required).`
+- ### Request Body:
+```json
+{
+  "username": "string",
+  "password": "string",
+  "two_factor_code": "string"  // Optional, required if 2FA is enabled for the account
+}
+
+```
+
 **Query Parameters:**
 **username:** `The username of the account.`
 **password:** `The password of the account.`
 ### **Responses:**
-**`200 OK:`** Returns an access token.
-**`401 Unauthorized:`** Invalid username or password.
+- `200 OK:` Returns an access token if login is successful.
+- ***`401 Unauthorized:`*** Invalid username, password, or 2FA code.
+- ***`403 Forbidden:`*** 2FA code required but not provided.
+### ***Login with 2FA:***
+
+1. When logging in, if 2FA is enabled for the account, the two_factor_code parameter is required.
+2. The provided 2FA code will be verified against the user's stored 2FA key.
+3. If the 2FA code is valid, an access token will be issued.
 ### **Signup**
 - **URL:** `/signup`
 - **Method:** `POST`

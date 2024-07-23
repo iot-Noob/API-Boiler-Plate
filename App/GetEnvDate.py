@@ -18,6 +18,9 @@ try:
     salt_length=os.getenv("salt_length")
     db_path=os.getenv("database_paths")
     db_name=os.getenv("database_names")
+    ## 2FA data
+    company_name=os.getenv("comp_names")
+    app_name=os.getenv("app_names")
 except Exception as e:
     print(f"Error occur load env file in secutiry due to {e}")
 

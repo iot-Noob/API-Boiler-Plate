@@ -183,6 +183,12 @@ async def generate_qr_code(secret: str, app_name: str, company_name: str) -> Dic
         return HTTPException(400,f"Error generate wr due to {e}")
 
 
+async def qr_raw(txt):
+    qr=qrcode.make(txt)
+    buffer=BytesIO()
+    qr.save(buffer,format="PNG")
+    buffer.seek(0)
+    return buffer.getvalue()
  
 
 async def verify_2fa_code(secret, code):

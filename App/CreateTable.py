@@ -13,7 +13,8 @@ async def create_table_user():
                     profile_pic VARCHAR(255),
                     user_role VARCHAR(50) NOT NULL,
                     disabled INTEGER DEFAULT 0,
-                    tfa_key VARCHAR (200)
+                    tfa_key VARCHAR (200),
+                    uri VARCHAR  
                 );
                         """,
             val=(),
