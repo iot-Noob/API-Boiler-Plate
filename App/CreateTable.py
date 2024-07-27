@@ -14,7 +14,7 @@ async def create_table_user():
                     user_role VARCHAR(50) NOT NULL,
                     disabled INTEGER DEFAULT 0,
                     tfa_key VARCHAR (200),
-                    uri VARCHAR  
+                    uri BLOB  
                 );
                         """,
             val=(),

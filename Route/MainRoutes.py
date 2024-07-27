@@ -1,10 +1,12 @@
 from App.LIbraryImport import *
-from App.GetEnvDate import dap,company_name,app_name
+from App.GetEnvDate import dap,company_name,app_name,sch_time
 from App.LoggingInit import *
 from App.DeleteTables import *
 from App.RunQuery import db
+from App.CryptoAES import AES_Encrypt
 Route = APIRouter()
 
+aes_encrypt=AES_Encrypt()
 
 async def admin_creation():
     try:
@@ -41,18 +43,20 @@ async def admin_creation():
         print(f"Fail to create admin due to {e}")
         logging.error(f"Fail to create admin due to {e}")
   
- 
-
+def background_service():
+    while True:
+        print("fuck israeel")
+        aes_encrypt.change_key()
+        logging.info("Time schedual start your password cradential updated!!")
+        time.sleep(int(sch_time) if sch_time else 122)
 
 @Route.on_event("startup")
 async def start():
     #await delete_all()
     await admin_creation()
-  
+    #threading.Thread(target=background_service, daemon=True).start()
     logging.info("API start sucess!!")
     print("ROUTE START SUCESS!!")
-    pass
-
 
 ##AUTH USER
 
@@ -61,7 +65,6 @@ async def shutdown_event():
     logging.info("API is shutitng down....")
     db.close_connection()
     print("Shutting down...")
-  
 
 
 @Route.post(
@@ -72,7 +75,7 @@ async def login(username: str = Query(...), password: str = Query(...),code:str|
 
     if user_data:
         if user_data[3]:
-            sk=user_data[3]
+            sk=aes_encrypt.decrypt(user_data[3])
             if code is None:
                 return HTTPException(400,"2FA code is requirew wehn its active")
             else:
@@ -251,7 +254,6 @@ async def delete_account(
         else:
             await delete_user_records(token=token, id=None)
     return HTTPException(200, f"Account delete sucess!!  ")
- 
 
 @Route.get("/generate_tfa_key", tags=['2FA'])
 async def get_2fa(token:str=Depends(get_current_user)):
@@ -264,18 +266,12 @@ async def get_2fa(token:str=Depends(get_current_user)):
             return HTTPException(400,f"cant verify code for account that is not vaild token invalid")
         secret = await generate_secret()
         result = await generate_qr_code(secret=secret, app_name=f"{app_name if app_name else "test app"}:{ad[1]}", company_name=company_name if company_name else "Iot Noob Production")
-        
+        ek= aes_encrypt.encrypt(b"talha ")
         qr_code_bytes = result["qr"]
+        eqr=aes_encrypt.encrypt(result["key"])
         response_headers = {
-            "X-2FA-Key": result["key"]
+            "code": base64.b64encode(eqr.encode('utf-8')).decode('utf-8')
         }
-        if not ad[2]:
-            uu=await RunQuery(q="""
-                                    UPDATE users
-                                    SET uri = ?
-                                    WHERE id =?
-                                    """,val=(result["key"],token["id"]))
-            logging.info("URI update sucess!!")
         return StreamingResponse(BytesIO(qr_code_bytes), media_type="image/png", headers={
             "Content-Disposition": "inline; filename=qrcode.png",
             **response_headers
@@ -284,31 +280,39 @@ async def get_2fa(token:str=Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-    
 @Route.post("/verify_code", tags=['2FA'])
 async def verify_code( code: TfaAuth, uri: str = Query(None,description="URI for verification"),token:str=Depends(get_current_user)):
     try:
-        ad=await RunQuery(q="""SELECT disabled,name,uri FROM users WHERE id=? """,val=(token["id"],))
+        ad=await RunQuery(q="""SELECT disabled,name,uri,tfa_key FROM users WHERE id=? """,val=(token["id"],))
         
         if ad[0]:
             return HTTPException(400,"Account is disabled canot proceed")
         vtoken = await authenticte_token(token=token)
         if not vtoken:
             return HTTPException(400,f"cant verify code for account that is not vaild token invalid")
-        if not ad[2]:
+        # return aes_encrypt.decrypt(base64.b64decode(ad[2]))
+        dec_uri=aes_encrypt.decrypt(base64.b64decode(ad[2])) 
+        dec_seckey=aes_encrypt.decrypt(ad[3])
+        dec_key_user=aes_encrypt.decrypt(base64.b64decode(uri)) if uri else ""
+      
+        if not dec_uri:
             if not uri:
                 return HTTPException(400,"URI is required ")
-        secret_key=await extract_secret_from_uri(uri if not ad[2] else ad[2])
        
+        
+        secret_key=await extract_secret_from_uri(dec_key_user if not dec_uri else  dec_uri if dec_uri else None)
+        
+        enc_seckey=aes_encrypt.encrypt(secret_key)
         utfak=await RunQuery(q="SELECT tfa_key FROM users WHERE id=?",val=(token["id"],))
-        verify_code_result = await verify_2fa_code(utfak[0] if utfak[0]  else secret_key, code.code)
+        verify_code_result = await verify_2fa_code(dec_seckey if dec_seckey else secret_key, code.code)
         if verify_code_result:
             if not utfak[0]:
                 uu=await RunQuery(q="""
                                 UPDATE users
-                                SET tfa_key = ?
+                                SET tfa_key = ?,
+                                uri=?
                                 WHERE id =?
-                                """,val=(secret_key,token["id"]))
+                                """,val=(enc_seckey,uri,token["id"]))
                 return{"Add 2FA sucess":uu if uu else ""}
             else:
                 return HTTPException(200,"Already register your 2FA Code")
@@ -317,7 +321,7 @@ async def verify_code( code: TfaAuth, uri: str = Query(None,description="URI for
             return HTTPException(400,"Code invalid or expire try again")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-## In case user URI is lost and still login account
+## In case user URI is lost and still lucky and logged in to your  account
 @Route.get("/get_uri_code",tags=['2FA'],description="in case you are login but lost uri ")
 async def get_uri(token:str=Depends(get_current_user)):
         vtoken = await authenticte_token(token=token)
