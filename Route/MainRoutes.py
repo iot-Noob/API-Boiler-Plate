@@ -291,10 +291,9 @@ async def verify_code( code: TfaAuth, uri: str = Query(None,description="URI for
         if not vtoken:
             return HTTPException(400,f"cant verify code for account that is not vaild token invalid")
         # return aes_encrypt.decrypt(base64.b64decode(ad[2]))
-        dec_uri=aes_encrypt.decrypt(base64.b64decode(ad[2])) 
-        dec_seckey=aes_encrypt.decrypt(ad[3])
-        dec_key_user=aes_encrypt.decrypt(base64.b64decode(uri)) if uri else ""
-      
+        dec_uri=aes_encrypt.decrypt(base64.b64decode(ad[2]))  if ad[2] else None
+        dec_seckey=aes_encrypt.decrypt(ad[3]) if ad[3] else None
+        dec_key_user=aes_encrypt.decrypt(base64.b64decode(uri).decode('utf-8')) if uri else None
         if not dec_uri:
             if not uri:
                 return HTTPException(400,"URI is required ")

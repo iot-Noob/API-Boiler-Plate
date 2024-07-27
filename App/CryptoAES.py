@@ -5,7 +5,7 @@ from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.backends import default_backend
 from App.GetEnvDate import ivs, key, set_keys
 from App.LoggingInit import *
-
+from fastapi import HTTPException
 class AES_Encrypt:
     def __init__(self):
         # Initialize key and IV
@@ -37,6 +37,7 @@ class AES_Encrypt:
         except Exception as e:
             print(f"Error encrypt due to {e}")
             logging.error(f"Error encrypt to AES due to {e}")
+            return HTTPException(500,f"Error AES Encrypt  due to {e}")
 
     def decrypt(self, ct: bytes) -> str:
         cipher = Cipher(algorithms.AES(self.gkey), modes.CBC(self.giv), backend=default_backend())
@@ -55,7 +56,7 @@ class AES_Encrypt:
         except ValueError as e:
             print(f"Decryption failed: {e}")
             logging.error(f"Error decrypt to AES due to {e}")
-            return ""
+            return HTTPException(500,f"Error AES Decrypt  due to {e}")
     
     def change_key(self):
         # Initialize key and IV
