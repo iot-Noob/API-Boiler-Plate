@@ -43,12 +43,12 @@ async def admin_creation():
         print(f"Fail to create admin due to {e}")
         logging.error(f"Fail to create admin due to {e}")
   
-def background_service():
-    while True:
-        print("fuck israeel")
-        aes_encrypt.change_key()
-        logging.info("Time schedual start your password cradential updated!!")
-        time.sleep(int(sch_time) if sch_time else 122)
+# def background_service():
+#     while True:
+#         print("fuck israeel")
+#         aes_encrypt.change_key()
+#         logging.info("Time schedual start your password cradential updated!!")
+#         time.sleep(int(sch_time) if sch_time else 122)
 
 @Route.on_event("startup")
 async def start():
