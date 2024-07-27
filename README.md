@@ -1,6 +1,5 @@
-# FastAPI Authentication Example
-FastAPI Authentication Example
-This project demonstrates how to use FastAPI with JWT for authentication, Argon2 for password hashing, and Two-Factor Authentication (2FA) for enhanced security. The application includes endpoints for user login, signup, account update, and account deletion.
+# FastAPI Basic boiler palte with 2FA and Advance encryption methods.
+This project demonstrates how to use FastAPI with JWT for authentication, Argon2 for password hashing, Two-Factor Authentication (2FA) for enhanced security, and AES for encrypting sensitive information. The application includes endpoints for user login, signup, account update, and account deletion.
 
 
 ## Prerequisites
@@ -13,6 +12,7 @@ This project demonstrates how to use FastAPI with JWT for authentication, Argon2
 - SQLite (or any other database supported by your `RunQuery` function)
 - `pyotp` for generating OTPs for 2FA
 - `qrcode` for generating QR codes for 2FA
+- `cryptography` for AES encryption
 ## Setup
 
 1. **Install Dependencies**
@@ -20,7 +20,7 @@ This project demonstrates how to use FastAPI with JWT for authentication, Argon2
    Ensure you have all necessary dependencies installed:
 
 ```bash
-pip install fastapi uvicorn argon2-cffi python-jose python-dotenv pyotp qrcode
+pip install fastapi uvicorn argon2-cffi python-jose python-dotenv pyotp qrcode cryptography
 ```
 ## 2. Create a .env file
 
@@ -28,19 +28,22 @@ pip install fastapi uvicorn argon2-cffi python-jose python-dotenv pyotp qrcode
 SECRET_KEY="your_secret_key_here"
 ALGORITHM="HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES=790
-databases_path="path_to_your_database.db" 
-databases_name="tallha_database.db"
-admin_paswd="123"
-log_filepath="./logs/"
-memory_costs=35555
-pararellisms=1
-hash_length=322
-salt_length=16
-time_cost=4
-salt=""
-pepper=""
-comp_names="Iot Noob"
-app_names="BoilerPlate FASTAPI "
+DATABASES_PATH="path_to_your_database.db"
+DATABASES_NAME="talha_database.db"
+ADMIN_PASSWORD="123"
+LOG_FILEPATH="./logs/"
+MEMORY_COST=35555
+PARALLELISM=1
+HASH_LENGTH=322
+SALT_LENGTH=16
+TIME_COST=4
+SALT=""
+PEPPER=""
+COMPANY_NAME="Iot Noob"
+APP_NAME="BoilerPlate FASTAPI"
+AES_KEY=""
+AES_IV=""
+
 ```
 
 - `SECRET_KEY:` Your secret key for encoding JWT tokens.
@@ -55,6 +58,8 @@ app_names="BoilerPlate FASTAPI "
 - `PEPPER` additional to secure password
 - `comp_names` name of company for 2FA Authenticator
 - `app_names` name of application for 2fa
+- `AES_KEY:` AES encryption key (auto-generated if not provided).
+- `AES_IV:` AES initialization vector (auto-generated if not provided).
 ## Database Setup
 Ensure your database schema is set up correctly. This application assumes you have a users table with the following columns:
 
@@ -166,6 +171,14 @@ Logs are stored in the directory specified by **`LOG_FILEPATH`** in the **`.env`
 ### Notes
 - Ensure to replace placeholder values in the .env file with your actual configuration.
 - Update database paths and configurations according to your environment.
+- Sensitive data, such as the 2FA secret key, is encrypted using AES.
  
 ### Project Information
 This is a private project named iotNoob by Talha.
+
+### AES Encryption
+To store the 2FA token securely, AES encryption is used. If the `AES_KE`Y and `AES_IV` are not provided, they will be auto-generated. Please note that losing the AES key or IV will result in loss of encrypted data.
+
+### `Warning`
+`Important: If you lose your AES key and IV, you will lose access to your encrypted data. Ensure you securely store these values.`
+ 
