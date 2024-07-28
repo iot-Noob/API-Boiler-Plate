@@ -70,7 +70,7 @@ async def shutdown_event():
 @Route.post(
     "/login", tags=["Auth User"], description="Login account with username and password"
 )
-async def login(username: str = Query(...), password: str = Query(...),code:str|None=None):
+async def login(code:Optional[TfaAuth]=None,username: str = Query(...), password: str = Query(...)):
     user_data = await authenticate_user(username=username, password=password)
 
     if user_data:
@@ -79,7 +79,7 @@ async def login(username: str = Query(...), password: str = Query(...),code:str|
             if code is None:
                 return HTTPException(400,"2FA code is requirew wehn its active")
             else:
-                vc=await verify_2fa_code(sk,code)
+                vc=await verify_2fa_code(sk,code.code)
                 if not vc:
                     return HTTPException(500,"Code is invalid or expire")
 
@@ -88,6 +88,7 @@ async def login(username: str = Query(...), password: str = Query(...),code:str|
         )
         return {"access_token": access_token, "token_type": "bearer"}
     else:
+        logging.error(f"Error username or password invalid fail to login...")
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
 
@@ -213,6 +214,7 @@ async def update_account(
 
 @Route.delete("/delete_account", tags=["account_settings and admin_roles"])
 async def delete_account(
+    code: Optional[TfaAuth] = None,
     token: str = Depends(get_current_user),
     uid: int = None,
     password: str = Query(None, min_length=1,description="Only for users that are not admin."),
@@ -221,7 +223,7 @@ async def delete_account(
     current_userole = await get_user_role(token=token)
     vtoken = await authenticte_token(token=token)
  
-    cuhp = await RunQuery(q="SELECT password,disabled FROM users WHERE id=?", val=(token["id"],))
+    cuhp = await RunQuery(q="SELECT password,disabled,tfa_key FROM users WHERE id=?", val=(token["id"],))
  
     if not vtoken:
         raise HTTPException(
@@ -231,7 +233,7 @@ async def delete_account(
   
     if current_userole[0] == "admin":
         
-        cue=await RunQuery(q="SELECT id FROM users WHERE id=?",val=(uid,))
+        cue=await RunQuery(q="SELECT id,tfa_key FROM users WHERE id=?",val=(uid,))
         if not cue:
             return HTTPException(404,"Canot delete user user dont exist")
         if not uid:
@@ -252,7 +254,18 @@ async def delete_account(
         if not await verify_password(password, cuhp[0]):
             return HTTPException(400, "Password didnt match cantnot delete account!!")
         else:
-            await delete_user_records(token=token, id=None)
+            
+            if cuhp[2]:
+                if  not code:
+                    return HTTPException("2FA is require should not be null")
+                dectok=aes_encrypt.decrypt(cuhp[2])
+                vtkn=await verify_2fa_code(dectok,code.code)
+                if vtkn:
+                    await delete_user_records(token=token, id=None)
+                else:
+                    return HTTPException(400,"Token is expire or invalid try again cant delete acount!!")
+            else:
+                await delete_user_records(token=token, id=None)
     return HTTPException(200, f"Account delete sucess!!  ")
 
 @Route.get("/generate_tfa_key", tags=['2FA'])
@@ -331,10 +344,13 @@ async def get_uri(token:str=Depends(get_current_user)):
         if not vtoken:
             return HTTPException(400,f"cant verify code for account that is not vaild token invalid")
         guri = await RunQuery(q="SELECT uri FROM users WHERE id=?", val=(token["id"],))
-        qr_code_bytes=await qr_raw(guri[0])
-
+        qr_code_bytes=await qr_raw(aes_encrypt.decrypt(base64.b64decode(guri[0])))
+        response_headers = {
+                    "2fa_key":guri[0]
+                }
         return StreamingResponse(BytesIO(qr_code_bytes), media_type="image/png", headers={
-            "Content-Disposition": "inline; filename=qrcode.png"
+            "Content-Disposition": "inline; filename=qrcode.png",
+            **response_headers
             
         })
  
