@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import jwt
-from argon2 import PasswordHasher
+from argon2 import PasswordHasher, exceptions as argon2_exceptions
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
 from passlib.context import CryptContext
@@ -26,8 +26,13 @@ pwd_context = PasswordHasher(
 oauth2_scheme = HTTPBearer()
 
 
-async def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(hash=hashed_password,password=plain_password)
+async def verify_password(plain_password: str, hashed_password: str) -> bool:
+    try:
+        return pwd_context.verify(hash=hashed_password, password=plain_password)
+    except argon2_exceptions.VerifyMismatchError:
+        return False
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Password verification failed due to {e}")
 
 
 async def get_password_hash(password):
