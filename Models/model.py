@@ -33,10 +33,7 @@ class TfaAuth(BaseModel):
 
     @validator('code')
     def validate_code(cls, value):
-        # Convert integer to string to check length and digits
         value_str = str(value)
-        
-        # Check if the length of the string representation is exactly 6 digits
         if len(value_str) != 6 or not value_str.isdigit():
             raise ValueError('The code must be a 6-digit numeric value.')
         return value

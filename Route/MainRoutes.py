@@ -67,7 +67,7 @@ async def shutdown_event():
 @Route.post(
     "/login", tags=["Auth User"], description="Login account with username and password"
 )
-async def login(username: str = Query(...), password: str = Query(...),code:str|None=None):
+async def login(code:Optional[TfaAuth]=None,username: str = Query(...), password: str = Query(...) ):
     user_data = await authenticate_user(username=username, password=password)
 
     if user_data:
@@ -76,7 +76,7 @@ async def login(username: str = Query(...), password: str = Query(...),code:str|
             if code is None:
                 return HTTPException(400,"2FA code is requirew wehn its active")
             else:
-                vc=await verify_2fa_code(sk,code)
+                vc=await verify_2fa_code(sk,code.code)
                 if not vc:
                     return HTTPException(500,"Code is invalid or expire")
 
@@ -210,6 +210,7 @@ async def update_account(
 
 @Route.delete("/delete_account", tags=["account_settings and admin_roles"])
 async def delete_account(
+    code:Optional[TfaAuth]=None,
     token: str = Depends(get_current_user),
     uid: int = None,
     password: str = Query(None, min_length=1,description="Only for users that are not admin."),
@@ -218,7 +219,7 @@ async def delete_account(
     current_userole = await get_user_role(token=token)
     vtoken = await authenticte_token(token=token)
  
-    cuhp = await RunQuery(q="SELECT password,disabled FROM users WHERE id=?", val=(token["id"],))
+    cuhp = await RunQuery(q="SELECT password,disabled,tfa_key FROM users WHERE id=?", val=(token["id"],))
  
     if not vtoken:
         raise HTTPException(
@@ -249,7 +250,12 @@ async def delete_account(
         if not await verify_password(password, cuhp[0]):
             return HTTPException(400, "Password didnt match cantnot delete account!!")
         else:
-            await delete_user_records(token=token, id=None)
+            if cuhp[2]:
+                if not code.code:
+                    return HTTPException(400,"2FA is active need code for 2fa auth to delete account")
+                await delete_user_records(token=token, id=None)
+            else:
+                await delete_user_records(token=token, id=None)
     return HTTPException(200, f"Account delete sucess!!  ")
  
 
