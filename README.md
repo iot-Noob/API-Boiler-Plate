@@ -28,22 +28,20 @@ pip install fastapi uvicorn argon2-cffi python-jose python-dotenv pyotp qrcode c
 SECRET_KEY="your_secret_key_here"
 ALGORITHM="HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES=790
-DATABASES_PATH="path_to_your_database.db"
-DATABASES_NAME="talha_database.db"
-ADMIN_PASSWORD="123"
-LOG_FILEPATH="./logs/"
-MEMORY_COST=35555
-PARALLELISM=1
-HASH_LENGTH=322
-SALT_LENGTH=16
-TIME_COST=4
-SALT=""
-PEPPER=""
-COMPANY_NAME="Iot Noob"
-APP_NAME="BoilerPlate FASTAPI"
+database_paths="path_to_your_database.db"
+database_names="talha_database.db"
+admin_paswd="123"
+log_filepath="./logs/"
+memory_costs=35555
+pararellisms=1
+hash_length=322
+salt_length=16
+time_cost=4
+comp_names="Iot Noob"
+app_names="BoilerPlate FASTAPI"
 AES_KEY=""
 AES_IV=""
-
+schedul_time=1800
 ```
 
 - `SECRET_KEY:` Your secret key for encoding JWT tokens.
