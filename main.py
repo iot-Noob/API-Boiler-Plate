@@ -1,10 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from Route.MainRoutes import Route
-from App.CreateTable import (
-    create_table_user,
-  
-)
 
 app = FastAPI(title="API Basic Boilerplate", version="0.0.1")
 
@@ -18,12 +14,12 @@ app.add_middleware(
 )
 
 
-# Event handler to create table on startup
-@app.on_event("startup")
-async def startup_event():
-    await create_table_user()
+# # Event handler to create table on startup
+# @app.on_event("startup")
+# async def startup_event():
+#     await create_table_user()
  
-    print("TABLE CREATE SUCESS!!!")
+#     print("TABLE CREATE SUCESS!!!")
 
 
 # Include routes

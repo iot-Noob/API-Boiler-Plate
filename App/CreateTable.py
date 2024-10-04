@@ -1,28 +1,15 @@
-from App.RunQuery import RunQuery
+from App.SQL_Connector import session,Base,engine
+from sqlalchemy import Column,Integer,VARCHAR,String,TEXT,Float,TIMESTAMP,DateTime,func,Boolean
+from sqlalchemy.orm import relationship
+class Users(Base):
+    __tablename__ = "users"
+    
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    name = Column(String(33), nullable=False, unique=True)
+    email = Column(String(200), nullable=False, unique=True)
+    password = Column(String(200), nullable=False)  
+    profile_pic = Column(String(200), nullable=True)  
+    user_role = Column(String(50), nullable=True)   
+    disable = Column(Boolean, default=False, nullable=False)  
 
-
-async def create_table_user():
-    try:
-        await RunQuery(
-            q="""
-                CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name VARCHAR(200) NOT NULL UNIQUE,
-                    email VARCHAR(200) NOT NULL UNIQUE,
-                    password VARCHAR(200) NOT NULL,
-                    profile_pic VARCHAR(255),
-                    user_role VARCHAR(50) NOT NULL,
-                    disabled INTEGER DEFAULT 0
-                );
-                        """,
-            val=(),
-            fetch_om="ONE",
-            exec_om=False,
-        )
-    except Exception as e:
-        print(f"Error creating user table due to {e}")
-
- 
- 
-
- 
+Base.metadata.create_all(engine)

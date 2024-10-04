@@ -5,10 +5,11 @@ from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
 from passlib.context import CryptContext
 from fastapi.security import HTTPBearer
-from App.RunQuery import RunQuery
 
+from App.CreateTable import Users
+from App.SQL_Connector import session
 from App.GetEnvDate import key, algo, exptime,memcost,parallelism,hashlength,salt_length 
-
+ 
 # Set default values if the configuration values are None
 default_memcost = 65536  # Example default value
 default_parallelism = 2  # Example default value
@@ -26,7 +27,7 @@ pwd_context = PasswordHasher(
 oauth2_scheme = HTTPBearer()
 
 
-async def verify_password(plain_password: str, hashed_password: str) -> bool:
+def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
         return pwd_context.verify(hash=hashed_password, password=plain_password)
     except argon2_exceptions.VerifyMismatchError:
@@ -35,31 +36,42 @@ async def verify_password(plain_password: str, hashed_password: str) -> bool:
         raise HTTPException(status_code=500, detail=f"Password verification failed due to {e}")
 
 
-async def get_password_hash(password):
+def get_password_hash(password):
     return pwd_context.hash(password=password)
 
 
-async def get_user(username: str):
+def get_user(username: str):
     try:
-        user = await RunQuery(
-            q=""" SELECT name,password,id FROM users WHERE name= ?""", val=(username,)
-        )
-        return user
+ 
+        user = session.query(
+            Users.name,
+            Users.password,
+            Users.id 
+        
+        ).filter(Users.name == username).one_or_none()
+ 
+        if user:
+ 
+            return list(user)
+        else:
+            raise HTTPException(status_code=404, detail="User not found")
     except Exception as e:
-        raise HTTPException(404, f"User not found {e}")
+        session.rollback()  # Ensure rollback in case of any other exceptions
+        raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
 
 
-async def authenticate_user(username: str, password: str):
-    user = await get_user(username)
 
+def authenticate_user(username: str, password: str):
+    user =  get_user(username)
+    print(user)
     if not user:
         return False
-    if not await verify_password(password, user[1]):
+    if not  verify_password(password, user[1]):
         return False
     return user
 
 
-async def create_access_token(data: dict, expires_delta: timedelta | None = None):
+def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
@@ -77,18 +89,19 @@ async def create_access_token(data: dict, expires_delta: timedelta | None = None
     return encoded_jwt
 
 
-async def decode_jwt(token: str):
+def decode_jwt(token: str):
     try:
         payload = jwt.decode(token, key, algorithms=[algo])
-
         return payload
     except JWTError as e:
+        print(f"JWT Error: {e}")  # Log the error for debugging
         return None
 
-
-async def get_current_user(token: str = Depends(oauth2_scheme)):
+def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
-        payload = await decode_jwt(token.credentials)
+       
+        payload =  decode_jwt(str(token.credentials))
+        
         if payload is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token format"
@@ -122,12 +135,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         )
 
 
-async def authenticte_token(token):
+def authenticte_token(token):
     try:
-        ueq = await RunQuery(
-            q="""SELECT id, disabled FROM users WHERE id=?""", val=(token["id"],)
-        )
-       
+        ueq=session.query(Users.id,Users.disable).filter(Users.id==token['id']).one_or_none()
+  
+        
         if not ueq:
             raise HTTPException(
                 status_code=404, detail="Invalid token: user does not exist"
@@ -150,10 +162,8 @@ async def authenticte_token(token):
         raise HTTPException(status_code=500, detail=f"Token validation error: {e}")
  
 
-async def get_user_role(token: str | None = None):
-    return await RunQuery(
-        q=""" SELECT user_role FROM users WHERE id = ?""", val=(token["id"],)
-    )
-
+def get_user_role(token: str | None = None):
+    role=session.query(Users.user_role).filter(Users.id==token['id']).one_or_none()
+    return role[0]
 
  

@@ -1,39 +1,16 @@
 from App.LIbraryImport import *
 from App.GetEnvDate import dap 
 from App.LoggingInit import *
-from App.DeleteTables import *
-
+from App.SQL_Connector import session
+from  App.CreateTable import Users
 Route = APIRouter()
 
-
-async def admin_creation():
+def admin_creation():
     try:
-
-        query = """ 
-            INSERT INTO users (name, email, password, profile_pic, user_role, disabled)
-            SELECT ?, ?, ?, ?, ?, ?
-            WHERE NOT EXISTS (
-                SELECT 1 FROM users WHERE name = ? OR email = ?
-            );
-        """
-        values = (
-            "admin",
-            "talhakhalid2018@gmail.com",
-            pwd_context.hash(dap),
-            "",
-            "admin",
-            0,
-            "admin",
-            "talhakhalid2018@gmail.com",
-        )
-
-        await RunQuery(q=query, val=values)
-        guu = await RunQuery(
-            q=""" SELECT name,id FROM users WHERE name=? """, val=("admin",)
-        )
-       
-    
-   
+        admin=Users(name="admin",email="zjohndavid88@gmail.com",password=pwd_context.hash(dap) if dap else pwd_context.hash("Admin@123456"),profile_pic="",user_role="admin",disable=False)
+        session.add(admin)
+        session.commit()
+     
         print("Admin user created successfully or already exists.")
         logging.info("Admin user created successfully or already exists.")
 
@@ -46,8 +23,8 @@ async def admin_creation():
 
 @Route.on_event("startup")
 async def start():
-    #await delete_all()
-    await admin_creation()
+ 
+    admin_creation()
   
     logging.info("API start sucess!!")
     print("ROUTE START SUCESS!!")
@@ -63,11 +40,12 @@ async def start():
     "/login", tags=["Auth User"], description="Login account with username and password"
 )
 async def login(username: str = Query(...), password: str = Query(...)):
-    user_data = await authenticate_user(username=username, password=password)
 
+    user_data =   authenticate_user(username=username, password=password)
+ 
     if user_data:
 
-        access_token = await create_access_token(
+        access_token =  create_access_token(
             data={"sub": user_data[0], "user_id": user_data[2]}
         )
         return {"access_token": access_token, "token_type": "bearer"}
@@ -76,168 +54,191 @@ async def login(username: str = Query(...), password: str = Query(...)):
 
 
 @Route.post("/signup", tags=["Auth User"])
-async def SignUp(data: User):
+async def SignUp(data: User ):
     try:
-        # Hash the password before storing it
+       
         hashed_password = pwd_context.hash(data.password)
+ 
+        existing_user = session.query(Users).filter(Users.name == data.name).one_or_none()
 
-        # Perform the insert operation
-        idata = await RunQuery(
-            q=""" 
-                INSERT INTO users (
-                    name,
-                    email,
-                    password,
-                    profile_pic,
-                    disabled,
-                    user_role
-                )               
-                VALUES (?, ?, ?, ?, ?,?); """,
-            val=(
-                data.name,
-                data.email,
-                hashed_password,
-                data.profile_pic,
-                data.disable,
-                "user",
-            ),
-            fetch_om="ONE",
-            exec_om=False,
+        if existing_user:
+            raise HTTPException(status_code=400, detail="User already exists")    
+        new_user = Users(
+            name=data.name,
+            email=data.email,
+            password=hashed_password,
+            profile_pic=data.profile_pic,
+            user_role="user",  
+            disable=data.disable
         )
-     
-  
-        return {"message": f"Successfully signed up account for {data.name}"}
+        
+        session.add(new_user)
+        session.commit()
+        
+        return {"message": f"Successfully signed up account for {data.name}"}, 201   
+        
     except Exception as e:
+        session.rollback()   
+        raise HTTPException(status_code=500, detail=f"Failed to sign up due to {str(e)}")
 
-        raise HTTPException(status_code=500, detail=f"Failed to sign up due to {e}")
-
+ 
 
 @Route.patch(path="/update_acount", tags=["account_settings and admin_roles"])
 async def update_account(
     uud: UpdateUser, user_id: int | None = None, token: str = Depends(get_current_user)
 ):
     try:
-        update_fields = []
-        update_values = []
         uid = token["id"]
-        vtoken = await authenticte_token(token=token)
+        vtoken = authenticte_token(token=token)
+
         if not vtoken:
             raise HTTPException(
-                404,
-                "User not found cant update maybe your toen in invalid or user not exist",
+                status_code=404,
+                detail="User not found, maybe your token is invalid or user does not exist",
             )
-        current_userole = await get_user_role(token=token)
 
-        if current_userole[0] == "admin":
-            gcu = await RunQuery(
-                q=""" SELECT name,id FROM users WHERE id=? """, val=(user_id,)
-            )
-            if not gcu:
-                return HTTPException(404, "User not found, Invalid user cant update")
-
+        current_user_role = get_user_role(token=token)
+      
+        if current_user_role == "admin":
+       
+            if not user_id:
+                raise HTTPException(status_code=400, detail="User ID must be provided for admin updates")
+            user = session.query(Users).filter(Users.id == user_id).one_or_none()
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+            
+   
             if uud.name is not None:
-                update_fields.append("name = ?")
-                update_values.append(uud.name)
+                name_check = session.query(Users).filter(Users.name == uud.name).filter(Users.id != user_id).first()
+                if name_check:
+                    raise HTTPException(status_code=400, detail="Name is already in use by another account")
+
             if uud.email is not None:
-                update_fields.append("email = ?")
-                update_values.append(uud.email)
+                email_check = session.query(Users).filter(Users.email == uud.email).filter(Users.id != user_id).first()
+                if email_check:
+                    raise HTTPException(status_code=400, detail="Email is already in use by another account")
+ 
+            if uud.name is not None:
+                user.name = uud.name
+            if uud.email is not None:
+                user.email = uud.email
             if uud.password is not None:
-                update_fields.append("password = ?")
-                update_values.append(pwd_context.hash(uud.password))
+                user.password = pwd_context.hash(uud.password)
             if uud.profile_pic is not None:
-                update_fields.append("profile_pic = ?")
-                update_values.append(uud.profile_pic)
+                user.profile_pic = uud.profile_pic
             if uud.user_role is not None:
-                update_fields.append("user_role = ?")
-                update_values.append(uud.user_role)
+                user.user_role = uud.user_role
             if uud.disable is not None:
-                update_fields.append("disabled = ?")
-                update_values.append(uud.disable)
-            if not update_fields:
-                raise HTTPException(
-                    status_code=400, detail="No update fields provided."
-                )
-            update_values.append(user_id)
-            update_query = f"UPDATE users SET {', '.join(update_fields)} WHERE id = ?"
+                user.disable = uud.disable
+            
+            session.commit()
+            return {"message": "Account updated successfully"}
 
         else:
-            if user_id:
-                return HTTPException(
-                    500, "You dnt have admin right to access or update acount"
-                )
-            if uud.name is not None:
-                update_fields.append("name = ?")
-                update_values.append(uud.name)
-            if uud.email is not None:
-                update_fields.append("email = ?")
-                update_values.append(uud.email)
-            if uud.password is not None:
-                update_fields.append("password = ?")
-                update_values.append(pwd_context.hash(uud.password))
-            if uud.profile_pic is not None:
-                update_fields.append("profile_pic = ?")
-                update_values.append(uud.profile_pic)
-            if uud.user_role is not None:
-                update_fields.append("user_role = ?")
-                update_values.append(uud.user_role)
-            if uud.disable is not None:
-                update_fields.append("disabled = ?")
-                update_values.append(uud.disable)
-            if not update_fields:
+ 
+            if user_id is not None and user_id != uid:
                 raise HTTPException(
-                    status_code=400, detail="No update fields provided."
+                    status_code=403, detail="You don't have admin rights to update another user's account"
                 )
-            update_values.append(uid)
-            update_query = f"UPDATE users SET {', '.join(update_fields)} WHERE id = ?"
-        await RunQuery(q=update_query, val=update_values)
-        return {"message": "Account updated successfully"}
+ 
+            if uud.disable is not None:
+                raise HTTPException(status_code=403, detail="You cannot update the 'disable' field.")
+            if uud.user_role is not None:
+                raise HTTPException(status_code=403, detail="You cannot update the 'user_role' field.")
+ 
+            user = session.query(Users).filter(Users.id == uid).one_or_none()
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+ 
+            if uud.name is not None:
+                name_check = session.query(Users).filter(Users.name == uud.name).filter(Users.id != uid).first()
+                if name_check:
+                    raise HTTPException(status_code=400, detail="Name is already in use by another account")
+
+            if uud.email is not None:
+                email_check = session.query(Users).filter(Users.email == uud.email).filter(Users.id != uid).first()
+                if email_check:
+                    raise HTTPException(status_code=400, detail="Email is already in use by another account")
+
+          
+            if uud.name is not None:
+                user.name = uud.name
+            if uud.email is not None:
+                user.email = uud.email
+            if uud.password is not None:
+                user.password = pwd_context.hash(uud.password)
+            if uud.profile_pic is not None:
+                user.profile_pic = uud.profile_pic
+
+            session.commit()
+            return {"message": "Account updated successfully"}
+
     except Exception as e:
-        raise HTTPException(500, f"Error update account due to {e}")
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Error updating account: {e}")
+
 
 
 @Route.delete("/delete_account", tags=["account_settings and admin_roles"])
 async def delete_account(
     token: str = Depends(get_current_user),
     uid: int = None,
-    password: str = Query(None, min_length=1,description="Only for users that are not admin."),
+    password: str = Query(None, min_length=1, description="Only for users that are not admin.") 
 ):
-    
-    current_userole = await get_user_role(token=token)
-    vtoken = await authenticte_token(token=token)
- 
-    cuhp = await RunQuery(q="SELECT password,disabled FROM users WHERE id=?", val=(token["id"],))
- 
-    if not vtoken:
-        raise HTTPException(
-            404,
-            "User not found cant update maybe your toen in invalid or user not exist",
-        )
-  
-    if current_userole[0] == "admin":
-        
-        cue=await RunQuery(q="SELECT id FROM users WHERE id=?",val=(uid,))
-        if not cue:
-            return HTTPException(404,"Canot delete user user dont exist")
-        if not uid:
-            return HTTPException(400,"User id canot be null")
-        if uid == token["id"]:
-            return HTTPException(400, "Canot delete admin permission denied!!")
-        dr=await delete_user_records(id=uid, token=None)
+    try:
+        current_user_role = get_user_role(token=token)
+        vtoken = authenticte_token(token=token)
 
-    else:
-        if uid:
-            return HTTPException(402, "Canot delete account dont have admin access")
-        if not cuhp:
-            return HTTPException(404,"User dont exist")
-        if cuhp[1]==True:
-            return HTTPException(500,"Canot delete account your account is disabled")
-        if not password:
-            return HTTPException(404, "Password is empty")
-        if not await verify_password(password, cuhp[0]):
-            return HTTPException(400, "Password didnt match cantnot delete account!!")
+        if not vtoken:
+            raise HTTPException(
+                status_code=404,
+                detail="User not found. Your token may be invalid or the user does not exist.",
+            )
+
+        if current_user_role == "admin":
+            # Admin deletion logic
+            if not uid:
+                raise HTTPException(status_code=400, detail="User ID cannot be null")
+            
+            user = session.query(Users).filter(Users.id == uid).one_or_none()
+            if not user:
+                raise HTTPException(status_code=404, detail="User does not exist")
+
+            if uid == token["id"]:
+                raise HTTPException(status_code=400, detail="Cannot delete yourself as an admin")
+
+            # Delete the user
+            session.delete(user)
+            session.commit()
+
         else:
-            await delete_user_records(token=token, id=None)
-    return HTTPException(200, f"Account delete sucess!!  ")
+            # Non-admin deletion logic
+            if uid:
+                raise HTTPException(status_code=403, detail="You do not have admin rights to delete another user's account")
+
+            user = session.query(Users).filter(Users.id == token["id"]).one_or_none()
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+
+            if user.disable:
+                raise HTTPException(status_code=403, detail="Cannot delete account. Your account is disabled.")
+
+            if not password:
+                raise HTTPException(status_code=400, detail="Password is required")
+
+            # Verify password
+            if not   verify_password(password, user.password):
+                raise HTTPException(status_code=400, detail="Incorrect password. Cannot delete account")
+
+            # Delete the user's own account
+            session.delete(user)
+            session.commit()
+
+        return {"message": "Account deleted successfully"}
+
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Error deleting account: {e}")
 
  
 
