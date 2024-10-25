@@ -1,6 +1,7 @@
-# FastAPI Authentication Example
+#  FastAPI Boilerplate with SQLAlchemy Integration
 
-This project demonstrates how to use FastAPI with JWT for authentication and Argon2 for password hashing. The application includes endpoints for user login, signup, account update, and account deletion.
+This project demonstrates how to use FastAPI with JWT for authentication, Argon2 for password hashing, and SQLAlchemy for database ORM. The application includes endpoints for user login, signup, account update, and account deletion.
+
 
 ## Prerequisites
 
@@ -9,7 +10,7 @@ This project demonstrates how to use FastAPI with JWT for authentication and Arg
 - Uvicorn
 - Argon2
 - JWT
-- SQLite (or any other database supported by your `RunQuery` function)
+- SQLite (or any other database supported by SQLAlchemy)
 
 ## Setup
 
@@ -18,25 +19,23 @@ This project demonstrates how to use FastAPI with JWT for authentication and Arg
    Ensure you have all necessary dependencies installed:
 
 ```bash
- pip install fastapi uvicorn argon2-cffi python-jose python-dotenv
+pip install fastapi uvicorn argon2-cffi python-jose python-dotenv sqlalchemy
+
 ```
 ## 2. Create a .env file
 
 ```env
-SECRET_KEY="your_secret_key_here"
+SECRET_KEY=" "
 ALGORITHM="HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES=790
-databases_path="path_to_your_database.db" 
-databases_name="tallha_database.db"
-admin_paswd="123"
+database_paths="databases" 
+database_names="test.db"
+admin_paswd="Admin@123456"
 log_filepath="./logs/"
 memory_costs=35555
 pararellisms=1
 hash_length=322
 salt_length=16
-time_cost=4
-salt=""
-pepper=""
 ```
 
 - `SECRET_KEY:` Your secret key for encoding JWT tokens.
@@ -59,6 +58,24 @@ Ensure your database schema is set up correctly. This application assumes you ha
 - **`user_role`**
 - **`disabled`**
 
+# Database Configuration for MySQL or PostgreSQL
+To switch to **MySQL** or **PostgreSQL** with SQLAlchemy, follow these additional steps:
+
+### MySQL Setup
+1. Install the MySQL client library if you haven't:
+    ```bash
+    pip install mysqlclient
+    ```
+   
+2.  Update the ```.env``` file with MySQL configuration:
+    ```bash
+    DATABASE_URL="mysql://username:password@host:port/database_name"
+    ```
+3. Modify the ```SQLAlchemy``` database URL in your FastAPI app in ``` App/GetEnvDate.py``` configuration:
+   ```python
+    DATABASE_URL = os.getenv("DATABASE_URL")
+
+   ```
 ## Endpoints
 ### Login
 - **URL:** `/login`
@@ -134,7 +151,7 @@ To run the FastAPI application, use Uvicorn:
 ```bash
 uvicorn main:app --reload
 ```
-Replace `main` with the name of your Python file if it's different.
+Replace `main` with the name of your Python file if it's different.D
 
 ### Logging
 Logs are stored in the directory specified by **`LOG_FILEPATH`** in the **`.env`** file.
