@@ -100,14 +100,15 @@ def decode_jwt(token: str):
 def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
        
-        payload =  decode_jwt(str(token.credentials))
-        
+        payload = jwt.decode(token, key=key, algorithms=[algo])
+       
         if payload is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token format"
             )
 
         expiration_time = payload.get("exp")
+   
         if expiration_time is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -121,7 +122,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
             )
 
         username: str = payload.get("sub")
-        id: str = payload.get("user_id")
+        id: str = payload.get("id")
         if not username:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -138,7 +139,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 def authenticte_token(token):
     try:
         ueq=session.query(Users.id,Users.disable).filter(Users.id==token['id']).one_or_none()
-  
+ 
         
         if not ueq:
             raise HTTPException(
