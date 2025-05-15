@@ -3,7 +3,35 @@ from App.GetEnvDate import dap
 from App.LoggingInit import *
 from App.SQL_Connector import session
 from  App.CreateTable import Users
-Route = APIRouter()
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: APIRouter):
+    # Startup logic
+    try:
+        print("App is starting...")
+        logging.info("API is starting")
+        uname=session.query(Users.name).filter(Users.name=="admin").one_or_none()[0]
+        if not  uname:
+            admin_creation()
+            logging.info("Admin created sucessfully")
+        logging.info("API start sucess!!")
+        print("ROUTE START SUCESS!!")
+        # e.g. connect to database, initialize things
+    except Exception as e:
+        print(f"Error starting API due to: {e}")
+        logging.error(f"Error starting API due to: {e}")
+    
+    yield   
+ 
+    # Shutdown logic
+    try:
+        print("App is shutting down...")
+        # e.g. disconnect from database, cleanup
+    except Exception as e:
+        print(f"Error during shutdown due to: {e}")
+        logging.error(f"Error starting API due to: {e}")
+Route = APIRouter(lifespan=lifespan)
 
 def admin_creation():
     try:
@@ -20,18 +48,7 @@ def admin_creation():
   
  
 
-
-@Route.on_event("startup")
-async def start():
  
-    admin_creation()
-  
-    logging.info("API start sucess!!")
-    print("ROUTE START SUCESS!!")
-    pass
-
-
-##AUTH USER
 
  
 
