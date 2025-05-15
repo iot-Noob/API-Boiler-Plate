@@ -24,7 +24,7 @@ pwd_context = PasswordHasher(
     
 )
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
  
 def verify_password(plain_password: str, hashed_password: str) -> bool:
