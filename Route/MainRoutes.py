@@ -53,22 +53,32 @@ def admin_creation():
  
 
 
-@Route.post(
-    "/login", tags=["Auth User"], description="Login account with username and password"
-)
-async def login(username: str = Query(...), password: str = Query(...)):
+# @Route.post(
+#     "/login", tags=["Auth User"], description="Login account with username and password"
+# )
+# async def login(username: str = Query(...), password: str = Query(...)):
 
-    user_data =   authenticate_user(username=username, password=password)
+#     user_data =   authenticate_user(username=username, password=password)
  
-    if user_data:
+#     if user_data:
 
-        access_token =  create_access_token(
-            data={"sub": user_data[0], "user_id": user_data[2]}
+#         access_token =  create_access_token(
+#             data={"sub": user_data[0], "user_id": user_data[2]}
+#         )
+#         return {"access_token": access_token, "token_type": "bearer"}
+#     else:
+#         raise HTTPException(status_code=401, detail="Invalid username or password")
+@Route.post("/login",tags=["Auth User"])
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = authenticate_user(form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
         )
-        return {"access_token": access_token, "token_type": "bearer"}
-    else:
-        raise HTTPException(status_code=401, detail="Invalid username or password")
-
+    access_token = create_access_token(data={"sub": user[0],"id":user[2]})
+    return {"access_token": access_token, "token_type": "bearer"}
 
 @Route.post("/signup", tags=["Auth User"])
 async def SignUp(data: User ):
