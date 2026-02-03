@@ -11,7 +11,7 @@ from App.api.dependencies.auth import (
  
 )
 from App.schemas.AuthScheema import UserResponse
-from App.models.UserAuthModel import User
+from App.models.UserAuthModel import User,UpdateUser
 from App.core.Connector import get_db
 admin_router=APIRouter(prefix="/admin_access",tags=["Admin"])
 logger = get_core_logger(__name__)
@@ -23,7 +23,7 @@ logger = get_core_logger(__name__)
 )
 async def update_account(
     user_id: int,
-    update_data: User,
+    update_data: UpdateUser,
     current_user: Dict[str, Any] = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
