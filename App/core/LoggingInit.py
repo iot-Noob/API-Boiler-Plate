@@ -1,17 +1,23 @@
-# App/core/logging.py (Simple version)
+# App/core/logging.py - FIXED VERSION (No GetEnvDate dependency)
 import logging
 import os
 import sys
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
+from typing import Optional
 
-def setup_core_logging():
-    """Setup logging for the core module"""
-    # Get log path from environment or use default
-    try:
-        from App.GetEnvDate import log_path
-        LOG_PATH = log_path if log_path else "logs"
-    except (ImportError, AttributeError):
+def setup_core_logging(log_path: Optional[str] = None) -> logging.Logger:
+    """Setup logging for the core module without GetEnvDate dependency"""
+    
+    # Get log path from various sources (in order of priority)
+    if log_path:
+        # Use provided path
+        LOG_PATH = log_path
+    elif "LOG_PATH" in os.environ:
+        # Use environment variable
+        LOG_PATH = os.environ["LOG_PATH"]
+    else:
+        # Use default
         LOG_PATH = "logs"
     
     # Create log directory
@@ -20,14 +26,18 @@ def setup_core_logging():
     
     log_file = log_dir / "core.log"
     
+    # Get log level from environment or use default
+    log_level_str = os.environ.get("LOG_LEVEL", "INFO").upper()
+    log_level = getattr(logging, log_level_str, logging.INFO)
+    
     # Configure root logger
     logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
+    logger.setLevel(log_level)
     
-    # Clear existing handlers
+    # Clear existing handlers to avoid duplicates
     logger.handlers.clear()
     
-    # File handler
+    # File handler with rotation
     file_handler = RotatingFileHandler(
         filename=log_file,
         maxBytes=10 * 1024 * 1024,  # 10MB
@@ -44,7 +54,7 @@ def setup_core_logging():
     
     # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(log_level)
     console_handler.setFormatter(
         logging.Formatter('%(levelname)s - %(name)s - %(message)s')
     )
@@ -55,6 +65,7 @@ def setup_core_logging():
     
     # Log initialization
     logger.info(f"Core logging initialized. File: {log_file}")
+    logger.info(f"Log level: {log_level_str}")
     
     return logger
 
@@ -64,3 +75,7 @@ core_logger = setup_core_logging()
 def get_core_logger(name: str = "App.core") -> logging.Logger:
     """Get a logger for core modules"""
     return logging.getLogger(name)
+
+def get_module_logger(module_name: str) -> logging.Logger:
+    """Get a logger for any module"""
+    return logging.getLogger(f"App.{module_name}")
