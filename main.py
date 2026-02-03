@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from Route.MainRoutes import Route
+from App.api.v1 import app_router
 
 app = FastAPI(title="API Basic Boilerplate", version="0.0.1")
 
@@ -23,4 +23,4 @@ app.add_middleware(
 
 
 # Include routes
-app.include_router(Route)
+app.include_router(app_router,prefix="/app/v1")
