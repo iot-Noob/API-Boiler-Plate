@@ -4,13 +4,14 @@ from typing import Optional, Dict, Any
 from argon2 import PasswordHasher, exceptions as argon2_exceptions
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from App.core.settings import settings
 from App.core.Connector import get_db
 from App.repository.UserRepository import UserRepository
 from App.core.LoggingInit import get_core_logger
+from fastapi.security import HTTPAuthorizationCredentials  # Add this import
 
 # Initialize logger
 logger = get_core_logger(__name__)
@@ -82,35 +83,75 @@ def create_access_token(
         )
 
 def decode_jwt(token: str) -> Optional[Dict[str, Any]]:
-    """Decode and validate JWT token"""
+    """Decode and validate JWT token - FIXED"""
     try:
+        print(f"Decoding token: {token[:30]}...")  # Show first 30 chars for debugging
+        
+        # Decode with verification
         payload = jwt.decode(
             token, 
             settings.secret_key_str, 
             algorithms=[settings.ALGORITHM]
         )
+        
+        # Log token type for debugging
+        token_type = payload.get("type", "unknown")
+        print(f"Token decoded successfully. Type: {token_type}")
+        
         return payload
-    except JWTError as e:
+        
+    except jwt.ExpiredSignatureError:
+        print("Token has expired")
+        logger.debug("Token expired")
+        return None
+    except jwt.JWTError as e:
+        print(f"JWT Error: {e}")
         logger.debug(f"JWT decode failed: {e}")
         return None
     except Exception as e:
+        print(f"Unexpected error: {type(e).__name__}: {e}")
         logger.error(f"Unexpected token decode error: {e}")
         return None
 
 # ========== DEPENDENCY INJECTIONS ==========
-
+bearer_scheme = HTTPBearer(auto_error=False)  # auto_error=False allows optional auth
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db)
 ) -> Dict[str, Any]:
-    """Get current authenticated user from token"""
+    """Get current authenticated user from token - FIXED"""
+    
+    # Check if token was provided
+    if not credentials:
+        logger.warning("No authorization credentials provided")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Extract token from credentials object
+    token = credentials.credentials
+    print(f"Extracted token: {token[:30]}...")
+    
     # Decode token
     payload = decode_jwt(token)
+    
     if payload is None:
         logger.warning("Invalid or malformed token received")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or malformed token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Check token type - REJECT REFRESH TOKENS!
+    token_type = payload.get("type")
+    if token_type == "refresh":
+        logger.warning("Refresh token used for authentication")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh tokens cannot be used for authentication. Use an access token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -213,7 +254,7 @@ async def authenticate_user(
     password: str,
     db: AsyncSession
 ) -> Optional[Dict[str, Any]]:
-    """Authenticate user by username and password"""
+    """Authenticate user by username and password - UPDATED"""
     try:
         repo = UserRepository(db)
         user = await repo.get_by_name(uname)

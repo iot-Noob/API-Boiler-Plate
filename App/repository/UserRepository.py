@@ -105,23 +105,44 @@ class UserRepository:
             logger.error(f"Error updating password for user {user_id}: {e}")
             return False
     
+    # FIXED delete method - allows account restoration
     async def delete(self, user_id: int) -> bool:
-        """Soft delete user"""
+        """Soft delete user (disable only)"""
         try:
             user = await self.get_by_id(user_id)
             if not user:
                 return False
             
+            # Only set disabled flag, keep is_active for possible restoration
             user.disabled = True
-            user.is_active = False
             await self.session.commit()
             
-            logger.info(f"Soft deleted user {user_id}")
+            logger.info(f"Soft deleted (disabled) user {user_id}")
             return True
             
         except Exception as e:
             await self.session.rollback()
             logger.error(f"Error deleting user {user_id}: {e}")
+            return False
+
+    # Add restoration method
+    async def restore(self, user_id: int) -> bool:
+        """Restore disabled user"""
+        try:
+            user = await self.get_by_id(user_id)
+            if not user:
+                return False
+            
+            user.disabled = False
+            # Optionally: user.is_active = True
+            await self.session.commit()
+            
+            logger.info(f"Restored user {user_id}")
+            return True
+            
+        except Exception as e:
+            await self.session.rollback()
+            logger.error(f"Error restoring user {user_id}: {e}")
             return False
     
     # ========== QUERIES ==========

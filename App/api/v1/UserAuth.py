@@ -28,7 +28,7 @@ logger = get_core_logger(__name__)
 
 
 # Create router
-router = APIRouter(prefix="/auth", tags=["Authentication"])
+router = APIRouter(prefix="/basic_auth", tags=["Authentication"])
 
 @router.post(
     "/login",
