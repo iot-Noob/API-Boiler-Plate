@@ -183,6 +183,21 @@ class Settings(BaseSettings):
         
         return v
     
+    @field_validator('RATE_LIMIT_DEFAULT', mode='before')
+    @classmethod
+    def validate_rate_limit(cls, v: Any) -> Any:
+        """Ensure RATE_LIMIT_DEFAULT is in a valid format (e.g., '100/minute')"""
+        if v is None:
+            return "100/minute"
+        v_str = str(v).strip()
+        if v_str.isdigit():
+            # If user provided a raw number, default it to per minute
+            return f"{v_str}/minute"
+        if "/" not in v_str:
+            # Fallback if no unit provided
+            return f"{v_str}/minute"
+        return v_str
+    
     @property
     def database_url(self) -> str:
         """Get PostgreSQL database URL"""

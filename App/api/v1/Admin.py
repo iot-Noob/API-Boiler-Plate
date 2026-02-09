@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from typing import Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from App.repository.UserRepository import UserRepository
@@ -166,4 +166,25 @@ async def delete_account(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Deletion failed: {str(e)}"
         )
+
+@admin_router.post(
+    "/reset-auto-kill",
+    status_code=status.HTTP_200_OK,
+    summary="Reset Auto-Kill Switch",
+    description="Allows administrators to reset the system from safety mode after an internal error."
+)
+async def reset_auto_kill(
+    request: Request,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Reset the auto-kill protection flag"""
+    if current_user.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can reset the safety mode"
+        )
+    
+    request.app.state.auto_kill_enabled = False
+    logger.info(f"System safety mode reset by admin: {current_user.get('email')}")
+    return {"status": "success", "message": "System safety mode has been reset."}
 
