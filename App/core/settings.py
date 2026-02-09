@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     )
     
     # Security
-    SECRET_KEY: SecretStr = Field(
-        default="bca38b24a804aa37d821d31af00f5598230122c5bbfc4c4ad5ed40e4258f04ca",
+    SECRET_KEY: Optional[SecretStr] = Field(
+        default=None,
         min_length=32,
         description="Secret key for JWT token signing"
     )
@@ -33,6 +33,17 @@ class Settings(BaseSettings):
         ge=1,
         le=10080,
         description="Access token expiration time in minutes"
+    )
+    
+    # Advanced Production Features
+    KILL_SWITCH_ENABLED: bool = Field(
+        default=False,
+        description="Global kill switch to disable the API (Maintenance Mode)"
+    )
+    
+    RATE_LIMIT_DEFAULT: str = Field(
+        default="100/minute",
+        description="Default rate limit for all endpoints"
     )
     
     # PostgreSQL Configuration
@@ -151,6 +162,15 @@ class Settings(BaseSettings):
         le=64,
         description="Length of salt for password hashing"
     )
+    @field_validator('SECRET_KEY', mode='before')
+    @classmethod
+    def validate_secret_key(cls, v: Any) -> Any:
+        """Ensure SECRET_KEY is set in production"""
+        env = os.getenv("ENVIRONMENT", "development")
+        if env == "production" and (v is None or v == ""):
+            raise ValueError("SECRET_KEY must be set in production")
+        return v or "bca38b24a804aa37d821d31af00f5598230122c5bbfc4c4ad5ed40e4258f04ca"
+
     @field_validator('DATABASE_PASSWORD', mode='before')
     @classmethod
     def validate_password(cls, v: Any) -> Any:

@@ -5,23 +5,26 @@ This project demonstrates how to use FastAPI with JWT for authentication, Argon2
 
 ## Prerequisites
 
-- Python 3.7+
-- FastAPI
-- Uvicorn
-- Argon2
-- JWT
-- SQLite (or any other database supported by SQLAlchemy)
+- Python 3.11+
+- Docker & Docker Compose (Recommended)
+- PostgreSQL (Production) or SQLite (Development)
 
-## Setup
+## Setup with Docker (Recommended)
 
-1. **Install Dependencies**
+1. **Clone the repository**
+2. **Configure your environment**
+   Create a `.env` file based on the template below:
+   ```env
+   SECRET_KEY=your_very_secret_key_at_least_32_chars
+   DATABASE_PASSWORD=your_db_password
+   ALLOWED_ORIGINS=http://localhost:3000,https://yourdomain.com
+   ```
+3. **Run with Docker Compose**
+   ```bash
+   docker-compose up -d
+   ```
 
-   Ensure you have all necessary dependencies installed:
-
-```bash
-pip install fastapi uvicorn argon2-cffi python-jose python-dotenv sqlalchemy
-
-```
+## Local Development Setup
 ## 2. Create a .env file
 
 ```env
@@ -58,19 +61,14 @@ Ensure your database schema is set up correctly. This application assumes you ha
 - **`user_role`**
 - **`disabled`**
 
-# Database Configuration for MySQL or PostgreSQL
-To switch to **MySQL** or **PostgreSQL** with SQLAlchemy, follow these additional steps:
+### Database Configuration
+The application is pre-configured for PostgreSQL with `asyncpg`. 
 
-### MySQL Setup
-1. Install the MySQL client library if you haven't:
-    ```bash
-    pip install mysqlclient
-    ```
-   
-2.  Update the ```.env``` file with MySQL configuration:
-    ```bash
-    DATABASE_URL="mysql://username:password@host:port/database_name"
-    ```
+1. Ensure your `.env` contains the correct `DATABASE_*` credentials.
+2. Apply migrations using Alembic:
+   ```bash
+   alembic upgrade head
+   ```
 3. Modify the ```SQLAlchemy``` database URL in your FastAPI app in ``` App/GetEnvDate.py``` configuration:
    ```python
     DATABASE_URL = os.getenv("DATABASE_URL")
