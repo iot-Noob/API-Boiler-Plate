@@ -1,268 +1,164 @@
-# FastAPI User Authentication & Management System
+#  FastAPI Boilerplate with SQLAlchemy Integration
 
-A production-ready FastAPI boilerplate with SQLite database, JWT authentication, and role-based access control.
+This project demonstrates how to use FastAPI with JWT for authentication, Argon2 for password hashing, and SQLAlchemy for database ORM. The application includes endpoints for user login, signup, account update, and account deletion.
 
-## Made by Talha Khalid
 
-## Features
+## Prerequisites
 
-### Authentication
-- JWT-based authentication with Argon2 password hashing
-- Login/Signup with email validation
-- Password strength validation (uppercase, lowercase, digit, special character)
-- Token-based session management
+- Python 3.11+
+- Docker & Docker Compose (Recommended)
+- PostgreSQL (Production) or SQLite (Development)
 
-### User Management
-- User registration and login
-- Profile viewing and editing
-- Password change and reset (admin can reset any user password)
-- Account activation/deactivation
-- Soft delete with restore capability
+## Setup with Docker (Recommended)
 
-### Role-Based Access Control
-- **Admin Role**: Full access to all user data and management
-- **User Role**: Limited to own profile management
+1. **Clone the repository**
+2. **Configure your environment**
+   Create a `.env` file based on the template below:
+   ```env
+   SECRET_KEY=your_very_secret_key_at_least_32_chars
+   DATABASE_PASSWORD=your_db_password
+   ALLOWED_ORIGINS=http://localhost:3000,https://yourdomain.com
+   ```
+3. **Run with Docker Compose**
+   ```bash
+   docker-compose up -d
+   ```
 
-### Security
-- Password hashing with Argon2
-- JWT tokens with configurable expiration
-- Role-based authorization
-- Input validation with Pydantic
-- SQL injection protection via SQLAlchemy
-
-## Tech Stack
-
-- **Framework**: FastAPI
-- **Database**: SQLite (via SQLAlchemy)
-- **Authentication**: JWT with Argon2 password hashing
-- **Validation**: Pydantic v2
-- **Rate Limiting**: SlowAPI
-- **Logging**: Python logging
-
-## Installation
-
-### 1. Clone the repository
-```bash
-git clone https://github.com/iot-Noob/API-Boiler-Plate.git
-cd API-Boiler-Plate
-```
-
-### 2. Create virtual environment
-```bash
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# or
-venv\Scripts\activate  # Windows
-```
-
-### 3. Install dependencies
-```bash
-pip install -r requirements.txt
-```
-
-### 4. Configure environment
-Edit the `.env` file with your settings:
+## Local Development Setup
+## 2. Create a .env file
 
 ```env
-# Security (REQUIRED)
-SECRET_KEY=your-secret-key-here-min-32-chars-long!
-ALGORITHM=HS256
+SECRET_KEY=" "
+ALGORITHM="HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES=790
-
-# Database
-SQLITE_DATABASE_URL=sqlite:///./app.db
-
-# Logging
-LOG_FILEPATH=./logs/
-
-# Rate Limiting
-RATE_LIMIT_DEFAULT=100/minute
-
-# Maintenance
-KILL_SWITCH_ENABLED=false
-
-# Argon2 Hashing
-MEMORY_COST=65536
-PARALLELISM=2
-HASH_LENGTH=32
-SALT_LENGTH=16
-
-# Admin User (REQUIRED)
-ADMIN_USERNAME=admin
-ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=Admin@123
-
-# Environment
-ENVIRONMENT=development
-ALLOWED_ORIGINS=*
+database_paths="databases" 
+database_names="test.db"
+admin_paswd="Admin@123456"
+log_filepath="./logs/"
+memory_costs=35555
+pararellisms=1
+hash_length=322
+salt_length=16
 ```
 
-### 5. Run the application
+- `SECRET_KEY:` Your secret key for encoding JWT tokens.
+- `ALGORITHM:` The algorithm used for encoding JWT tokens.
+- `ACCESS_TOKEN_EXPIRE_MINUTES:1 The expiration time for access     tokens in minutes.
+- `databases_path:` Path to your database file.
+- `databases_name:` Name to your database file like test.db for sqlite3. e.g. `talha.db`
+- `ADMIN_PASSWORD:` Default password for the admin user.
+- `LOG_FILEPATH:` Path for log file storage.
+- “`memory_costs`, `pararellisms`, `hash_length`, `salt_length`: Parameters for Argon2 config”
+- `SALT:` additional to secure password
+- `PEPPER` additional to secure password
+## Database Setup
+Ensure your database schema is set up correctly. This application assumes you have a users table with the following columns:
+
+- **`name`**
+- **`email`**
+- **`password`**
+- **`profile_pic`**
+- **`user_role`**
+- **`disabled`**
+
+### Database Configuration
+The application is pre-configured for PostgreSQL with `asyncpg`. 
+
+1. Ensure your `.env` contains the correct `DATABASE_*` credentials.
+2. Apply migrations using Alembic:
+   ```bash
+   alembic upgrade head
+   ```
+3. Modify the ```SQLAlchemy``` database URL in your FastAPI app in ``` App/GetEnvDate.py``` configuration:
+   ```python
+    DATABASE_URL = os.getenv("DATABASE_URL")
+
+   ```
+## Endpoints
+### Login
+- **URL:** `/login`
+**Method:** `POST`
+**Description:** `Login with username and password.`
+**Query Parameters:**
+**username:** `The username of the account.`
+**password:** `The password of the account.`
+### **Responses:**
+**`200 OK:`** Returns an access token.
+**`401 Unauthorized:`** Invalid username or password.
+### **Signup**
+- **URL:** `/signup`
+- **Method:** `POST`
+- **Description:** Create a new user account.
+```json
+{
+  "name": "string",
+  "email": "string",
+  "password": "string",
+  "profile_pic": "string",
+  "disable": boolean
+}
+
+```
+##  Responses:
+- **200 OK:** Account created successfully.
+- **500 Internal Server Error:** Failed to sign up due to server error.
+
+## Update Account
+- **URL:** /update_acount
+- **Method:** PATCH
+- **Description:** Update user account details.
+- **Request Body**
+```json
+{
+  "name": "string",
+  "email": "string",
+  "password": "string",
+  "profile_pic": "string",
+  "user_role": "string",
+  "disable": boolean
+}
+
+```
+
+
+- **Query Parameters:**
+**`user_id:`** ID of the user to update (admin only).
+- **`Responses:`**
+- **`200 OK:`** Account updated successfully.
+- **`400 Bad Request:`** No update fields provided.
+- **`404 Not Found:`** User not found.
+- **`500 Internal Server Error:`** Error updating account.
+### Delete Account
+- **URL: /delete_account**
+- **Method: DELETE**
+- **`Description: Delete user account.**
+- **`Query Parameters:**
+- **`uid: ID of the user to delete (admin only).**
+- **`password: Password of the account (for non-admin - users).`**
+- ### Responses:
+- ***`200 OK:`*** Account deleted successfully.
+- ***`400 Bad Request:`*** Invalid request parameters.
+- ***`401 Unauthorized:`*** Invalid token or password.
+- ***`404 Not Found:`*** User not found.
+- ***`500 Internal Server Error:`*** Error deleting account.
+
+### Running the Application
+
+To run the FastAPI application, use Uvicorn:
+
 ```bash
 uvicorn main:app --reload
 ```
+Replace `main` with the name of your Python file if it's different.D
 
-The API will be available at `http://localhost:8000`
-
-## API Endpoints
-
-### Authentication
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/app/v1/users/signup` | Register new user |
-| POST | `/app/v1/users/login` | Login and get token |
-
-### User Management
-| Method | Endpoint | Description | Access |
-|--------|----------|-------------|--------|
-| GET | `/app/v1/users/me` | Get current user profile | User |
-| GET | `/app/v1/users/` | List all users | Admin |
-| GET | `/app/v1/users/{id}` | Get user by ID | User (own), Admin (any) |
-| PUT | `/app/v1/users/{id}` | Update user | User (own), Admin (any) |
-| DELETE | `/app/v1/users/{id}` | Delete user | User (own), Admin (any) |
-| POST | `/app/v1/users/change-password` | Change own password | User |
-| POST | `/app/v1/users/{id}/reset-password` | Reset user password | Admin |
-| POST | `/app/v1/users/{id}/activate` | Activate user | Admin |
-| POST | `/app/v1/users/{id}/deactivate` | Deactivate user | Admin |
-| GET | `/app/v1/users/deleted/list` | List deleted users | Admin |
-| POST | `/app/v1/users/{id}/restore` | Restore deleted user | Admin |
-
-### System
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | Health check |
-
-## Usage Examples
-
-### 1. Register a new user
-```bash
-curl -X POST http://localhost:8000/app/v1/users/signup \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "johndoe",
-    "email": "john@example.com",
-    "password": "Password@123",
-    "full_name": "John Doe"
-  }'
-```
-
-### 2. Login
-```bash
-curl -X POST http://localhost:8000/app/v1/users/login \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=johndoe&password=Password@123"
-```
-
-Response:
-```json
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "token_type": "bearer",
-  "user": {
-    "id": 2,
-    "username": "johndoe",
-    "email": "john@example.com",
-    "full_name": "John Doe",
-    "user_role": "user",
-    "is_active": true,
-    "disabled": false
-  }
-}
-```
-
-### 3. Get current user profile
-```bash
-curl -X GET http://localhost:8000/app/v1/users/me \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
-```
-
-### 4. Update own profile
-```bash
-curl -X PUT http://localhost:8000/app/v1/users/2 \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "newemail@example.com",
-    "full_name": "John Updated"
-  }'
-```
-
-### 5. Admin - List all users
-```bash
-curl -X GET http://localhost:8000/app/v1/users/ \
-  -H "Authorization: Bearer ADMIN_ACCESS_TOKEN"
-```
-
-### 6. Admin - Reset user password
-```bash
-curl -X POST http://localhost:8000/app/v1/users/2/reset-password \
-  -H "Authorization: Bearer ADMIN_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "new_password": "NewPass@123"
-  }'
-```
-
-## Project Structure
-
-```
-GptMobal/
-├── App/
-│   ├── api/
-│   │   ├── dependencies/
-│   │   │   ├── auth.py          # JWT & password utilities
-│   │   │   └── sqlite_connector.py
-│   │   └── v1/
-│   │       ├── Users.py         # User endpoints
-│   │       └── langChainsRoutes.py
-│   ├── core/
-│   │   ├── settings.py          # Configuration
-│   │   └── LoggingInit.py
-│   ├── models/
-│   │   └── userModels.py        # Pydantic models
-│   ├── repository/
-│   │   └── userRepository.py    # Database operations
-│   └── schemas/
-│       └── userSchemas.py
-├── main.py                      # Application entry point
-├── .env                         # Environment variables
-└── app.db                       # SQLite database (auto-created)
-```
-
-## Environment Variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| SECRET_KEY | Yes | - | JWT secret key (min 32 chars) |
-| ALGORITHM | Yes | HS256 | JWT algorithm |
-| ACCESS_TOKEN_EXPIRE_MINUTES | Yes | 790 | Token expiry time |
-| SQLITE_DATABASE_URL | Yes | sqlite:///./app.db | Database URL |
-| LOG_FILEPATH | Yes | ./logs/ | Logs directory |
-| RATE_LIMIT_DEFAULT | Yes | 100/minute | Rate limit |
-| KILL_SWITCH_ENABLED | No | false | Maintenance mode |
-| MEMORY_COST | Yes | 65536 | Argon2 memory cost |
-| PARALLELISM | Yes | 2 | Argon2 parallelism |
-| HASH_LENGTH | Yes | 32 | Argon2 hash length |
-| SALT_LENGTH | Yes | 16 | Argon2 salt length |
-| ADMIN_USERNAME | Yes | admin | Default admin username |
-| ADMIN_EMAIL | Yes | admin@example.com | Default admin email |
-| ADMIN_PASSWORD | Yes | Admin@123 | Default admin password |
-| ENVIRONMENT | No | development | Environment mode |
-| ALLOWED_ORIGINS | No | * | CORS origins |
-
-## Production Deployment
-
-1. Set `ENVIRONMENT=production` in `.env`
-2. Set a strong `SECRET_KEY` (generate a random 64+ character string)
-3. Configure `ALLOWED_ORIGINS` with your frontend domain
-4. Use a production-grade database (PostgreSQL recommended)
-5. Enable HTTPS/SSL
-6. Configure proper CORS settings
-
-## License
-
-MIT License
-
-## Author
-
-**Talha Khalid**
+### Logging
+Logs are stored in the directory specified by **`LOG_FILEPATH`** in the **`.env`** file.
+### Security
+- Passwords are hashed using Argon2.
+- JWT tokens are used for authentication and have an expiration time.
+### Notes
+- Ensure to replace placeholder values in the .env file with your actual configuration.
+- Update database paths and configurations according to your environment.
+ 
+### Project Information
+This is a private project named iotNoob by Talha.
