@@ -11,7 +11,7 @@ from App.core.settings import settings
 from App.core.Connector import get_db
 from App.repository.UserRepository import UserRepository
 from App.core.LoggingInit import get_core_logger
-from fastapi.security import HTTPAuthorizationCredentials  # Add this import
+from fastapi.security import HTTPAuthorizationCredentials,APIKeyCookie 
 
 # Initialize logger
 logger = get_core_logger(__name__)
@@ -25,8 +25,9 @@ pwd_context = PasswordHasher(
 )
 
 # Use OAuth2PasswordBearer for standard OAuth2 flows
-oauth2_scheme =HTTPBearer()
-
+oauth2_scheme =HTTPBearer(auto_error=False)
+cookie_scheme=APIKeyCookie(name="CSO",auto_error=False)
+ 
 # ========== PASSWORD FUNCTIONS ==========
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -113,25 +114,30 @@ def decode_jwt(token: str) -> Optional[Dict[str, Any]]:
         logger.error(f"Unexpected token decode error: {e}")
         return None
 
-# ========== DEPENDENCY INJECTIONS ==========
-bearer_scheme = HTTPBearer(auto_error=False)  # auto_error=False allows optional auth
+# ========== DEPENDENCY INJECTIONS ========== 
 async def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    cookie_auth:Optional[str]=Depends(cookie_scheme),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db)
 ) -> Dict[str, Any]:
     """Get current authenticated user from token - FIXED"""
     
     # Check if token was provided
-    if not credentials:
-        logger.warning("No authorization credentials provided")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
+    # if not credentials:
+    #     logger.warning("No authorization credentials provided")
+    #     raise HTTPException(
+    #         status_code=status.HTTP_401_UNAUTHORIZED,
+    #         detail="Not authenticated",
+    #         headers={"WWW-Authenticate": "Bearer"},
+    #     )
+    token=None
     # Extract token from credentials object
-    token = credentials.credentials
+    if credentials:
+        token = credentials.credentials
+    elif cookie_auth:
+        token=cookie_auth
+    if not token:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,"Error unprcoess content or or invalid data")
     print(f"Extracted token: {token[:30]}...")
     
     # Decode token

@@ -1,6 +1,6 @@
 # App/api/v1/UserAuth.py - PROFESSIONAL REFACTORED VERSION
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Body
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Body,Response
 from App.schemas.AuthScheema import TokenResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from App.core.LoggingInit import get_core_logger
@@ -16,8 +16,9 @@ from App.api.dependencies.auth import (
 
     validate_password_strength
 )
+from typing import Optional
 from App.repository.UserRepository import UserRepository
-
+from App.core.settings import settings
 # Initialize logger
 logger = get_core_logger(__name__)
 
@@ -37,18 +38,20 @@ router = APIRouter(prefix="/basic_auth", tags=["Authentication"])
     description="Authenticate user with email and password"
 )
 async def login(
+    res: Response,
     form_data: LoginUser,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    cookie_login: Optional[bool] = False,
 ):
     """
     Login endpoint supporting OAuth2 password flow.
     Returns access and refresh tokens.
     """
     try:
-        # Get password from SecretStr - FIX THIS
+        # Get password from SecretStr
         password = form_data.password.get_secret_value()
         
-        # Authenticate user - USE username (not name)
+        # Authenticate user
         user = await authenticate_user(form_data.username, password, db)
          
         if not user:
@@ -59,7 +62,7 @@ async def login(
                 headers={"WWW-Authenticate": "Bearer"},
             )
         
-        # Create tokens
+        # ✅ CREATE TOKENS FIRST - BEFORE ANY CONDITION!
         access_token = create_access_token(
             data={
                 "sub": user["email"],
@@ -76,13 +79,46 @@ async def login(
             }
         )
         
+        expires_in_seconds = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+        
         logger.info(f"User logged in successfully: {user['email']}")
         
-        return TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            expires_in=3600  # 1 hour
-        )
+        # ========== COOKIE MODE ==========
+        if cookie_login:
+            # ✅ Set access token cookie
+            res.set_cookie(
+                key="CSO",
+                value=access_token,  # ✅ Now defined!
+                httponly=True,
+                secure=False,
+                samesite="lax",
+                max_age=expires_in_seconds,
+                path="/",
+                domain=None,
+            )
+            
+            
+            
+            # ✅ Return user data (tokens in cookies)
+            return {
+                "token":access_token,
+                "status": "success",
+                "message": "Logged in successfully",
+                "user": {
+                    "id": user["id"],
+                    "email": user["email"],
+                    "name": user["name"],
+                    "role": user["role"]
+                }
+            }
+        
+        # ========== JSON MODE ==========
+        else:
+            return TokenResponse(
+                access_token=access_token,
+                refresh_token=refresh_token,
+                expires_in=expires_in_seconds
+            )
         
     except HTTPException:
         raise
@@ -92,7 +128,7 @@ async def login(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error during login"
         )
-
+    
 # App/api/v1/UserAuth.py - FIXED VERSION
 @router.post(
     "/signup",
@@ -102,8 +138,10 @@ async def login(
     description="Create a new user account"
 )
 async def signup(
+    
     user_data: User,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+   
 ):
     """Register a new user"""
     try:
