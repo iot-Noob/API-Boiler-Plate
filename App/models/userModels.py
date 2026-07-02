@@ -18,7 +18,7 @@ class LoginRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     """Login response model"""
-    access_token: str
+    access_token: Optional[str]=None
     token_type: str = "bearer"
     user: "UserData"
 

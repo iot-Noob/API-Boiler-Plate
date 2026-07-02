@@ -4,7 +4,7 @@ from typing import Optional, Dict, Any
 from argon2 import PasswordHasher, exceptions as argon2_exceptions
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials,APIKeyCookie
 from sqlalchemy.orm import Session
 
 from App.core.settings import settings
@@ -24,8 +24,8 @@ pwd_context = PasswordHasher(
 )
 
 # Use OAuth2PasswordBearer for standard OAuth2 flows
-oauth2_scheme =HTTPBearer()
-
+oauth2_scheme =HTTPBearer(auto_error=False)
+cookie_barer=APIKeyCookie(name="cookie_auth",auto_error=False)
 # ========== PASSWORD FUNCTIONS ==========
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -113,13 +113,14 @@ def decode_jwt(token: str) -> Optional[Dict[str, Any]]:
         return None
 
 # ========== DEPENDENCY INJECTIONS ==========
-bearer_scheme = HTTPBearer(auto_error=False)  # auto_error=False allows optional auth
+ 
 async def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    cookie_barer:Optional[str]=Depends(cookie_barer),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(oauth2_scheme),
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     """Get current authenticated user from token - FIXED"""
-    
+    token=None
     # Check if token was provided
     if not credentials:
         logger.warning("No authorization credentials provided")
@@ -130,7 +131,12 @@ async def get_current_user(
         )
     
     # Extract token from credentials object
-    token = credentials.credentials
+    if cookie_barer:
+        token = cookie_barer
+    elif credentials:
+        token = credentials.credentials
+    if not token:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,f"Error unauthorise user ")
     print(f"Extracted token: {token[:30]}...")
     
     # Decode token
@@ -364,14 +370,30 @@ async def refresh_access_token(refresh_token: str, db: Session) -> Optional[str]
 
 # Additional dependency for optional authentication
 async def get_current_user_optional(
-    token: Optional[str] = Depends(oauth2_scheme),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(oauth2_scheme),
+    cookie_crad: Optional[str] = Depends(cookie_barer),
     db: Session = Depends(get_db)
 ) -> Optional[Dict[str, Any]]:
     """Optional authentication - returns user if authenticated, None otherwise"""
+    token = None
+    
+    # 1. Extract from Bearer Header if available
+    if credentials:
+        token = credentials.credentials
+    # 2. Fallback to Cookie if Header is missing
+    elif cookie_crad:
+        token = cookie_crad
+    
+    # If no token found, return None (optional auth)
     if not token:
         return None
     
     try:
-        return await get_current_user(token, db)
+        # Use the same authentication logic
+        return await get_current_user(
+            credentials=credentials, 
+            cookie_crad=cookie_crad, 
+            db=db
+        )
     except HTTPException:
         return None

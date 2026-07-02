@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status,Response
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List,Optional
 import logging
-
+from App.core.settings import settings
 from App.api.dependencies.sqlite_connector import get_db
 from App.api.dependencies.auth import (
     get_current_user,
@@ -88,7 +88,9 @@ async def signup(
 
 @router.post("/login", response_model=LoginResponse)
 async def login(
+    res:Response,
     login_data: LoginRequest,
+    cookie_login:Optional[bool]=False,
     db: Session = Depends(get_db)
 ):
     """Login user and get access token"""
@@ -127,19 +129,41 @@ async def login(
             "role": user.user_role
         }
     )
-    
-    return LoginResponse(
-        access_token=access_token,
-        user=UserData(
-            id=user.id,
-            username=user.username,
-            email=user.email,
-            full_name=user.full_name,
-            user_role=user.user_role,
-            is_active=user.is_active,
-            disabled=user.disabled
+    if cookie_login:
+        res.set_cookie(
+            key="auth",
+            value=access_token,
+            httponly=True,
+            max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # Convert minutes to seconds
+            samesite="lax",
+            secure=False,
+        )  
+        return LoginResponse(
+           
+            user=UserData(
+                id=user.id,
+                username=user.username,
+                email=user.email,
+                full_name=user.full_name,
+                user_role=user.user_role,
+                is_active=user.is_active,
+                disabled=user.disabled
+            )
+        )    
+        pass
+    else:
+        return LoginResponse(
+            access_token=access_token,
+            user=UserData(
+                id=user.id,
+                username=user.username,
+                email=user.email,
+                full_name=user.full_name,
+                user_role=user.user_role,
+                is_active=user.is_active,
+                disabled=user.disabled
+            )
         )
-    )
 
 
 # ==================== USER ENDPOINTS ====================
