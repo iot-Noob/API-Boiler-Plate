@@ -51,7 +51,7 @@ def get_password_hash(password: str) -> str:
 
 def create_access_token(
     data: Dict[str, Any], 
-    expires_delta: Optional[timedelta] = None
+    expires_delta: Optional[timedelta] = None,
 ) -> str:
     """Create JWT access token"""
     try:
@@ -86,7 +86,7 @@ def create_access_token(
 def decode_jwt(token: str) -> Optional[Dict[str, Any]]:
     """Decode and validate JWT token - FIXED"""
     try:
-        print(f"Decoding token: {token[:30]}...")  # Show first 30 chars for debugging
+      
         
         # Decode with verification
         payload = jwt.decode(
@@ -116,28 +116,37 @@ def decode_jwt(token: str) -> Optional[Dict[str, Any]]:
 
 # ========== DEPENDENCY INJECTIONS ========== 
 async def get_current_user(
+
     cookie_auth:Optional[str]=Depends(cookie_scheme),
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db)
 ) -> Dict[str, Any]:
     """Get current authenticated user from token - FIXED"""
-    
-    # Check if token was provided
-    # if not credentials:
-    #     logger.warning("No authorization credentials provided")
-    #     raise HTTPException(
-    #         status_code=status.HTTP_401_UNAUTHORIZED,
-    #         detail="Not authenticated",
-    #         headers={"WWW-Authenticate": "Bearer"},
-    #     )
+ 
+ 
     token=None
-    # Extract token from credentials object
+    
     if credentials:
         token = credentials.credentials
+        logger.debug("Using Bearer token")
+    
+    # ✅ Check cookie second
     elif cookie_auth:
-        token=cookie_auth
+        
+        token = cookie_auth
+        
+        logger.debug("Using cookie token")
+    
+    
     if not token:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,"Error unprcoess content or or invalid data")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No authentication token found"
+        )
+    
+    # ✅ Clean token (remove "Bearer " prefix if present)
+    if token.startswith("Bearer "):
+        token = token[7:]
     print(f"Extracted token: {token[:30]}...")
     
     # Decode token
@@ -150,7 +159,7 @@ async def get_current_user(
             detail="Invalid or malformed token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+    is_slt_token = payload.get("types") == "slts"
     # Check token type - REJECT REFRESH TOKENS!
     token_type = payload.get("type")
     if token_type == "refresh":
@@ -202,22 +211,33 @@ async def get_current_user(
                 detail="User not found"
             )
         
-        if user.disabled or not user.is_active:
-            logger.warning(f"Inactive user tried to authenticate: {user_id}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Account is disabled"
-            )
         
+        # ✅ SLT tokens bypass ALL status checks
+        if is_slt_token:
+            pass  # ← SLT token: skip everything!
+        
+        # ✅ Normal tokens: check status
+        else:
+            if user.is_deleted:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+            
+            if user.disabled or not user.is_active:
+                logger.warning(f"Inactive user tried to authenticate: {user_id}")
+                raise HTTPException(403, "Account is disabled or inactive. Contact admin.")
+            
         logger.debug(f"Authenticated user: {user.email} (ID: {user.id})")
         
         return {
             "id": user.id,
+            "user_id": user.id, 
             "email": user.email,
             "name": user.name,
             "role": user.user_role,
             "is_active": user.is_active,
-            "disabled": user.disabled
+            "disabled": user.disabled,
+            "token_type": payload.get("type"),
+            "token_purpose": payload.get("purpose"),
+            "types": payload.get("types")
         }
         
     except HTTPException:
@@ -366,6 +386,38 @@ async def refresh_access_token(refresh_token: str, db: AsyncSession) -> Optional
         
     except Exception as e:
         logger.error(f"Token refresh error: {e}")
+        return None
+
+async def create_short_live_token(user_id: int, db: AsyncSession) -> Optional[str]:
+    """
+    Create a short-lived token (2 minutes) for account restoration.
+    Uses the same logic as refresh_access_token but with SLT type and shorter expiry.
+    """
+    try:
+        repo = UserRepository(db)
+        user = await repo.get_by_id(user_id)
+        
+        if not user:
+            return None
+        
+        # ✅ Create short-live token (2 minutes expiry)
+        short_token = create_access_token(
+            data={
+                "sub": user.email,
+                "user_id": user.id,  
+                "name": user.name,
+                "role": user.user_role,
+                "types": "slts",
+                "purpose": "restore_account"
+            },
+            
+            expires_delta=timedelta(minutes=2)  # ← 2 minutes!
+        )
+        
+        return short_token
+        
+    except Exception as e:
+        logger.error(f"Short-live token creation error: {e}")
         return None
 
 # Additional dependency for optional authentication

@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, and_
 from typing import Optional, List, Dict, Any, Tuple
 import logging
-
+from datetime import datetime,timezone
 # Import ONLY SQLAlchemy model
 from App.api.databases.MigrateTable import User as UserModel
 
@@ -31,7 +31,7 @@ class UserRepository:
     async def get_by_email(self, email: str) -> Optional[UserModel]:
         """Get user by email"""
         try:
-            result = await self.session.execute(
+            result = await self.session.execute( 
                 select(UserModel).where(UserModel.email == email)
             )
             return result.scalar_one_or_none()
@@ -106,7 +106,7 @@ class UserRepository:
             return False
     
     # FIXED delete method - allows account restoration
-    async def delete(self, user_id: int) -> bool:
+    async def disable_account(self, user_id: int) -> bool:
         """Soft delete user (disable only)"""
         try:
             user = await self.get_by_id(user_id)
@@ -126,14 +126,16 @@ class UserRepository:
             return False
 
     # Add restoration method
-    async def restore(self, user_id: int) -> bool:
+    async def restore_disable(self, user_id: int) -> bool:
         """Restore disabled user"""
         try:
             user = await self.get_by_id(user_id)
             if not user:
                 return False
-            
-            user.disabled = False
+            if user.disabled:
+                user.disabled = False
+            else:
+                return False
             # Optionally: user.is_active = True
             await self.session.commit()
             
@@ -143,6 +145,75 @@ class UserRepository:
         except Exception as e:
             await self.session.rollback()
             logger.error(f"Error restoring user {user_id}: {e}")
+            return False
+            
+    async def delete_account(self, user_id: int) -> bool:
+        """
+        Soft delete a user account.
+        Sets is_deleted=True, disabled=True, is_active=False, and records deletion timestamp.
+        """
+        try:
+            user = await self.get_by_id(user_id)
+            if not user:
+                logger.warning(f"User {user_id} not found for deletion")
+                return False
+            
+            # ✅ Check if already deleted
+            if user.is_deleted:
+                logger.info(f"User {user_id} is already deleted")
+                return False
+            
+            # ✅ Soft delete the user
+            user.is_deleted = True
+            
+            user.disabled = True
+            user.is_active = False
+            
+            await self.session.commit()
+            await self.session.refresh(user)
+            
+            logger.info(f"✅ User {user_id} soft deleted at {user.deleted_at}")
+            return True
+            
+        except Exception as e:
+            await self.session.rollback()
+            logger.error(f"Error soft deleting user {user_id}: {e}")
+            return False
+    async def restore_deleted(self, user_id: int) -> bool:
+        """Restore a soft-deleted user account"""
+        try:
+            user = await self.get_by_id(user_id)
+            if not user:
+                logger.warning(f"User {user_id} not found for restoration")
+                return False
+            
+            # ✅ Check if user is actually deleted
+            if not user.is_deleted:
+                logger.info(f"User {user_id} is not deleted")
+                return False
+            
+            # ✅ Restore the user
+            user.is_deleted = False
+            user.deleted_at = None          # ← Clear deletion timestamp
+            user.disabled = False
+            user.is_active = True
+            
+            # ✅ Save changes
+            await self.session.commit()
+            await self.session.refresh(user)
+            
+            logger.info(f"✅ User {user_id} restored successfully")
+            return True
+            
+        except Exception as e:
+            await self.session.rollback()
+            logger.error(f"Error restoring user {user_id}: {e}")
+            return False
+            
+            pass
+        except Exception as e:
+            await self.session.rollback()
+            logging.error(f"Error restore delete user due to {e}")
             return False
     
     # ========== QUERIES ==========

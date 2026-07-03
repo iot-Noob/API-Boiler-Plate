@@ -58,13 +58,15 @@ async def login(
             logger.warning(f"Failed login attempt for email: {form_data.username}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid email or password",
+                detail="Invalid email or password or account is not there or disable!\n\nContact admin",
                 headers={"WWW-Authenticate": "Bearer"},
             )
         
         # ✅ CREATE TOKENS FIRST - BEFORE ANY CONDITION!
+        
         access_token = create_access_token(
             data={
+                "type":"token",
                 "sub": user["email"],
                 "user_id": user["id"],
                 "name": user["name"],
@@ -74,6 +76,7 @@ async def login(
         
         refresh_token = create_refresh_token(
             data={
+                "type":"rf_token",
                 "sub": user["email"],
                 "user_id": user["id"]
             }
