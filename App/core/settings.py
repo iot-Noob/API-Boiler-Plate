@@ -169,7 +169,7 @@ class Settings(BaseSettings):
         env = os.getenv("ENVIRONMENT", "development")
         if env == "production" and (v is None or v == ""):
             raise ValueError("SECRET_KEY must be set in production")
-        return v or "bca38b24a804aa37d821d31af00f5598230122c5bbfc4c4ad5ed40e4258f04ca"
+        return v  
 
     @field_validator('DATABASE_PASSWORD', mode='before')
     @classmethod
