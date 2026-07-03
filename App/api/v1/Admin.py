@@ -188,6 +188,14 @@ async def disable_account(
     summary="Enable user account",
     description="Enable a disabled or inactive user account. Admin can enable any user. SLT token can enable its own user. Users can enable themselves with password verification."
 )
+# App/api/v1/Admin.py - FINAL CORRECT VERSION
+
+@admin_router.post(
+    "/account/enable/{user_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Enable user account",
+    description="Enable a disabled or inactive user account. Admin can enable any user. SLT token can enable its own user. Users can enable themselves with password verification."
+)
 async def enable_account(
     user_id: int,
     password: Optional[str] = Query(None, description="Required for non-admin users"),
@@ -206,24 +214,22 @@ async def enable_account(
         
         # ✅ Check if this is an SLT/restore token
         is_restore_token = _is_restore_token(current_user)
-        slt_user_id = current_user.get("user_id")  
+        slt_user_id = current_user.get("id")  # ← FIXED: use "id" not "user_id"
         cur_id = current_user.get("id")
         cur_role = current_user.get("role")
         
         # ✅ Get target user
         target_user = await repo.get_by_id(user_id)
         if not target_user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
+            raise HTTPException(404, "User not found")
         
         # ✅ Check if user actually needs enabling
         if not target_user.disabled and target_user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="User is already active. No enable needed."
-            )
+            raise HTTPException(400, "User is already active. No enable needed.")
+        
+        # ✅ Check if deleted
+        if target_user.is_deleted:
+            raise HTTPException(400, "User is deleted. Use restore endpoint instead.")
         
         is_self_enable = cur_id == user_id
         is_admin = cur_role == "admin"
@@ -243,7 +249,8 @@ async def enable_account(
                     detail=f"SLT token can only enable user {slt_user_id}, not {user_id}"
                 )
             
-            success = await repo.restore_disable(user_id)
+            # ✅ Use full_restore (handles all states)
+            success = await repo.full_restore(user_id)
             if not success:
                 raise HTTPException(500, "Failed to enable account with SLT token")
             
@@ -260,7 +267,8 @@ async def enable_account(
         # CASE 2: ADMIN ENABLING ANY USER
         # ============================================================
         if is_admin and not is_self_enable:
-            success = await repo.restore_disable(user_id)
+            # ✅ Use full_restore (handles all states)
+            success = await repo.full_restore(user_id)
             if not success:
                 raise HTTPException(500, "Failed to enable user account")
             
@@ -278,18 +286,13 @@ async def enable_account(
         # ============================================================
         if is_self_enable:
             if not password:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Password required for self-enable"
-                )
+                raise HTTPException(400, "Password required for self-enable")
             
             if not verify_password(password, target_user.password_hash):
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Incorrect password"
-                )
+                raise HTTPException(401, "Incorrect password")
             
-            success = await repo.restore_disable(user_id)
+            # ✅ Use full_restore (handles all states)
+            success = await repo.full_restore(user_id)
             if not success:
                 raise HTTPException(500, "Failed to enable your account")
             
@@ -305,21 +308,15 @@ async def enable_account(
         # ============================================================
         # CASE 4: NO PERMISSION
         # ============================================================
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to enable this account"
-        )
+        raise HTTPException(403, "You don't have permission to enable this account")
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Enable account error: {e}")
         await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Enable failed: {str(e)}"
-        )
- 
+        raise HTTPException(500, "Failed to enable account")
+
 @admin_router.post(
     "/account/temp_token/{user_id}",
     status_code=status.HTTP_200_OK,
@@ -416,8 +413,7 @@ async def temp_token_maker(
                 "expires_in_minutes": 2
             }
             
-    except HTTPException:
-        raise
+ 
     except Exception as e:
         logger.error(f"Temp token error: {e}")
         await db.rollback()

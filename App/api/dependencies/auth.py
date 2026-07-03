@@ -121,8 +121,18 @@ async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db)
 ) -> Dict[str, Any]:
-    """Get current authenticated user from token - FIXED"""
- 
+    """
+    Get current authenticated user from token.
+    
+    ⚠️ TOKEN TYPES:
+    - Normal ('type': 'access'): Standard auth, expires in 13 hours
+    - Refresh ('type': 'refresh'): Rejected for auth (use /refresh endpoint)
+    - SLT ('types': 'slts'): Short-Live Token (2 min)
+        🔴 WARNING: SLT tokens BYPASS all status checks!
+        ✅ Purpose: Account restoration, password reset
+        ⏰ Expiry: 2 minutes
+        🔒 Single-use recommended
+    """
  
     token=None
     

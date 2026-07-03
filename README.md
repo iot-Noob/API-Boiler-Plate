@@ -1,6 +1,6 @@
 #  FastAPI Boilerplate with SQLAlchemy Integration
 
-This project demonstrates how to use FastAPI with JWT for authentication, Argon2 for password hashing, and SQLAlchemy for database ORM. The application includes endpoints for user login, signup, account update, and account deletion.
+This project demonstrates how to use FastAPI with JWT for authentication, Argon2 for password hashing, and SQLAlchemy for database ORM. The application now includes secure auth flows for login, signup, account update, account disable/enable, account restore, password change, and short-lived account restoration tokens.
 
 
 ## Prerequisites
@@ -74,6 +74,27 @@ The application is pre-configured for PostgreSQL with `asyncpg`.
     DATABASE_URL = os.getenv("DATABASE_URL")
 
    ```
+## Authentication & Account Recovery (Current Flow)
+
+The API now supports:
+- JWT access tokens and refresh tokens
+- Bearer token authentication and optional cookie-based auth via the `CSO` cookie
+- Admin account management for disable, enable, restore, and delete actions
+- Self-service account enablement with password verification
+- Short-lived restore tokens for account restoration or password recovery
+
+### Admin account management routes
+- `POST /admin_access/account/disable/{user_id}` - Disable an account
+- `POST /admin_access/account/enable/{user_id}` - Enable a disabled account
+- `POST /admin_access/account/restore/{user_id}` - Restore a deleted or disabled account
+- `POST /admin_access/account/temp_token/{user_id}` - Create a short-lived token for restoration or password reset
+- `PUT /admin_access/account/password/{user_id}` - Update a user's password
+
+### Notes
+- Short-lived tokens expire in 2 minutes and are intended for recovery flows.
+- The restore token can be used to enable or restore the target account directly.
+- Password-based self-enable and self-delete flows still require the user's current password.
+
 ## Endpoints
 ### Login
 - **URL:** `/login`

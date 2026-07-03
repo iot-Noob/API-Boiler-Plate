@@ -125,26 +125,47 @@ class UserRepository:
             logger.error(f"Error deleting user {user_id}: {e}")
             return False
 
-    # Add restoration method
+ 
     async def restore_disable(self, user_id: int) -> bool:
-        """Restore disabled user"""
+        """Fully restore a disabled user account"""
         try:
             user = await self.get_by_id(user_id)
             if not user:
                 return False
             if user.disabled:
                 user.disabled = False
-            else:
-                return False
-            # Optionally: user.is_active = True
-            await self.session.commit()
-            
-            logger.info(f"Restored user {user_id}")
-            return True
-            
+                user.is_active = True  # ✅ Restore active status
+                # ✅ Don't touch is_deleted (deleted is separate)
+                await self.session.commit()
+                await self.session.refresh(user)
+                logger.info(f"✅ User {user_id} fully restored from disabled")
+                return True
+            return False
         except Exception as e:
             await self.session.rollback()
             logger.error(f"Error restoring user {user_id}: {e}")
+            return False
+
+    async def full_restore(self, user_id: int) -> bool:
+        """Complete account restoration - handles all states"""
+        try:
+            user = await self.get_by_id(user_id)
+            if not user:
+                return False
+            
+            # ✅ Restore EVERYTHING
+            user.disabled = False
+            user.is_active = True
+            user.is_deleted = False
+            user.deleted_at = None
+            
+            await self.session.commit()
+            await self.session.refresh(user)
+            logger.info(f"✅ User {user_id} fully restored")
+            return True
+        except Exception as e:
+            await self.session.rollback()
+            logger.error(f"Error fully restoring user {user_id}: {e}")
             return False
             
     async def delete_account(self, user_id: int) -> bool:
