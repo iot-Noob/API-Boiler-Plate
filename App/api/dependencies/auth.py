@@ -115,7 +115,7 @@ def decode_jwt(token: str) -> Optional[Dict[str, Any]]:
         return None
 
 # ========== DEPENDENCY INJECTIONS ========== 
-async def get_current_user(
+async def get_current_user_slt(
 
     cookie_auth:Optional[str]=Depends(cookie_scheme),
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(oauth2_scheme),
@@ -226,6 +226,150 @@ async def get_current_user(
         if is_slt_token:
             pass  # ← SLT token: skip everything!
         
+        # ✅ Normal tokens: check status
+        else:
+            if user.is_deleted:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+            
+            if user.disabled or not user.is_active:
+                logger.warning(f"Inactive user tried to authenticate: {user_id}")
+                raise HTTPException(403, "Account is disabled or inactive. Contact admin.")
+            
+        logger.debug(f"Authenticated user: {user.email} (ID: {user.id})")
+        
+        return {
+            "id": user.id,
+            "user_id": user.id, 
+            "email": user.email,
+            "name": user.name,
+            "role": user.user_role,
+            "is_active": user.is_active,
+            "disabled": user.disabled,
+            "token_type": payload.get("type"),
+            "token_purpose": payload.get("purpose"),
+            "types": payload.get("types")
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting current user: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service error"
+        )
+
+async def get_current_user(
+
+    cookie_auth:Optional[str]=Depends(cookie_scheme),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Get current authenticated user from token.
+    
+    ⚠️ TOKEN TYPES:
+    - Normal ('type': 'access'): Standard auth, expires in 13 hours
+    - Refresh ('type': 'refresh'): Rejected for auth (use /refresh endpoint)
+    - SLT ('types': 'slts'): Short-Live Token (2 min)
+        🔴 WARNING: SLT tokens BYPASS all status checks!
+        ✅ Purpose: Account restoration, password reset
+        ⏰ Expiry: 2 minutes
+        🔒 Single-use recommended
+    """
+ 
+    token=None
+    
+    if credentials:
+        token = credentials.credentials
+        logger.debug("Using Bearer token")
+    
+    # ✅ Check cookie second
+    elif cookie_auth:
+        
+        token = cookie_auth
+        
+        logger.debug("Using cookie token")
+    
+    
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No authentication token found"
+        )
+    
+    # ✅ Clean token (remove "Bearer " prefix if present)
+    if token.startswith("Bearer "):
+        token = token[7:]
+    print(f"Extracted token: {token[:30]}...")
+    
+    # Decode token
+    payload = decode_jwt(token)
+    
+    if payload is None:
+        logger.warning("Invalid or malformed token received")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or malformed token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    is_slt_token = payload.get("types") == "slts"
+    # Check token type - REJECT REFRESH TOKENS!
+    token_type = payload.get("type")
+    if token_type == "refresh":
+        logger.warning("Refresh token used for authentication")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh tokens cannot be used for authentication. Use an access token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Check expiration
+    exp = payload.get("exp")
+    if exp is None:
+        logger.warning("Token has no expiration time")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has no expiration",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    expiration_datetime = datetime.fromtimestamp(exp, timezone.utc)
+    if expiration_datetime <= datetime.now(timezone.utc):
+        logger.warning(f"Expired token used: expired at {expiration_datetime}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Get user info from token
+    user_id = payload.get("user_id")
+    if not user_id:
+        logger.warning("Token missing user_id")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Get user from database using repository
+    try:
+        repo = UserRepository(db)
+        user = await repo.get_by_id(user_id)
+        
+        if not user:
+            logger.warning(f"User not found for ID: {user_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        
+        # ✅ SLT tokens bypass ALL status checks
+        if is_slt_token:
+            raise HTTPException(status.HTTP_403_FORBIDDEN,"Short term token not allowed")
+   
         # ✅ Normal tokens: check status
         else:
             if user.is_deleted:

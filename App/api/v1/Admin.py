@@ -10,6 +10,7 @@ from App.api.dependencies.auth import (
     get_password_hash,
     create_access_token,
     create_short_live_token,
+    get_current_user_slt
  
 )
 from App.schemas.AuthScheema import UserResponse
@@ -199,7 +200,7 @@ async def disable_account(
 async def enable_account(
     user_id: int,
     password: Optional[str] = Query(None, description="Required for non-admin users"),
-    current_user: Dict[str, Any] = Depends(get_current_user),
+    current_user: Dict[str, Any] = Depends(get_current_user_slt),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -549,7 +550,7 @@ async def delete_account(
 )
 async def restore_account(
     user_id: int,
-    current_user: Dict[str, Any] = Depends(get_current_user),
+    current_user: Dict[str, Any] = Depends(get_current_user_slt),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -646,7 +647,7 @@ async def restore_account(
 async def update_password(
     user_id: int,
     new_password: str,
-    current_user: Dict[str, Any] = Depends(get_current_user),
+    current_user: Dict[str, Any] = Depends(get_current_user_slt),
     old_password: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
