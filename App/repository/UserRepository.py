@@ -394,3 +394,74 @@ class UserRepository:
             await self.session.rollback()
             logger.error(f"Error in bulk update: {e}")
             return 0
+
+    @classmethod
+    async def create_admin_if_not_exists(
+        cls,
+        session: AsyncSession,  # ← MUST pass session explicitly
+        email: str,
+        password_hash: str,
+        name: str = "System Administrator",
+        role: str = "admin",
+        tier: str = "enterprise"
+    ) -> Optional[UserModel]:
+        """
+        Create admin user if it doesn't exist.
+        
+        This is a CLASS METHOD for use in migrations.
+        Pass session explicitly.
+        
+        Args:
+            session: Database session (required)
+            email: Admin email
+            password_hash: Hashed password
+            name: Admin name
+
+
+            role: User role
+            tier: User tier
+        """
+        try:
+            # ✅ Use session directly (no self)
+            result = await session.execute(
+                select(UserModel).where(UserModel.email == email)
+            )
+            existing_user = result.scalar_one_or_none()
+            
+            # If user exists
+            if existing_user:
+                if existing_user.user_role == "admin":
+                    logger.info(f"✅ Admin already exists: {email}")
+                    return existing_user
+                
+                # Promote to admin
+                logger.info(f"🔄 Promoting user to admin: {email}")
+                existing_user.user_role = "admin"
+                existing_user.tier = tier
+                await session.commit()
+                await session.refresh(existing_user)
+                logger.info(f"✅ Promoted user to admin: {email}")
+                return existing_user
+            
+            # Create new admin
+            logger.info(f"🆕 Creating new admin: {email}")
+            new_admin = UserModel(
+                name=name,
+                email=email,
+                password_hash=password_hash,
+                user_role=role,
+                is_active=True,
+                disabled=False,
+                is_deleted=False,
+          
+            )
+            session.add(new_admin)
+            await session.commit()
+            await session.refresh(new_admin)
+            logger.info(f"✅ New admin created: {email}")
+            return new_admin
+            
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"❌ Error creating/promoting admin: {e}")
+            return None

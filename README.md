@@ -1,185 +1,246 @@
-#  FastAPI Boilerplate with SQLAlchemy Integration
+# FastAPI Boilerplate with SQLAlchemy Integration
 
-This project demonstrates how to use FastAPI with JWT for authentication, Argon2 for password hashing, and SQLAlchemy for database ORM. The application now includes secure auth flows for login, signup, account update, account disable/enable, account restore, password change, and short-lived account restoration tokens.
+This repository demonstrates a FastAPI application with JWT authentication, Argon2 password hashing, and SQLAlchemy async ORM for PostgreSQL.
 
+The project includes:
+- Login and signup flows
+- JWT access and refresh token support
+- Admin account management: disable, enable, restore, delete
+- Self-service account restore and password change
+- Short-lived restore tokens for account recovery
+- Rate limiting and CORS support
 
 ## Prerequisites
 
 - Python 3.11+
-- Docker & Docker Compose (Recommended)
-- PostgreSQL (Production) or SQLite (Development)
+- Docker & Docker Compose (recommended)
+- PostgreSQL for production
 
-## Setup with Docker (Recommended)
+## Docker Setup (Recommended)
 
-1. **Clone the repository**
-2. **Configure your environment**
-   Create a `.env` file based on the template below:
-   ```env
-   SECRET_KEY=your_very_secret_key_at_least_32_chars
-   DATABASE_PASSWORD=your_db_password
-   ALLOWED_ORIGINS=http://localhost:3000,https://yourdomain.com
-   ```
-3. **Run with Docker Compose**
-   ```bash
-   docker-compose up -d
-   ```
+1. Clone the repository.
+2. Create a `.env` file in the repo root.
+3. Start services:
 
-## Local Development Setup
-## 2. Create a .env file
+```bash
+docker-compose up -d
+```
+
+### Required `.env` values for Docker
 
 ```env
-SECRET_KEY=" "
-ALGORITHM="HS256"
+SECRET_KEY=your_very_secret_key_at_least_32_chars
+DATABASE_PASSWORD=your_db_password
+ALLOWED_ORIGINS=http://localhost:3000,https://yourdomain.com
+RATE_LIMIT_DEFAULT=100/minute
+KILL_SWITCH_ENABLED=false
+```
+
+Docker Compose uses PostgreSQL and injects the connection settings into the API container.
+
+## Local Development Setup
+
+Create a `.env` file in the repository root with these values:
+
+```env
+SECRET_KEY=your_very_secret_key_at_least_32_chars
+ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=790
-database_paths="databases" 
-database_names="test.db"
-admin_paswd="Admin@123456"
-log_filepath="./logs/"
-memory_costs=35555
-pararellisms=1
-hash_length=322
-salt_length=16
+DATABASE_HOST=localhost
+DATABASE_PORT=5432
+DATABASE_USER=postgres
+DATABASE_PASSWORD=your_db_password
+DATABASE_NAME=myapp_db
+DATABASE_SCHEMA=public
+DATABASE_SSLMODE=prefer
+ALLOWED_ORIGINS=http://localhost:3000,https://yourdomain.com
+KILL_SWITCH_ENABLED=false
+RATE_LIMIT_DEFAULT=100/minute
+LOG_FILEPATH=./logs/
+MEMORY_COST=65536
+PARALLELISM=2
+HASH_LENGTH=32
+SALT_LENGTH=16
 ```
 
-- `SECRET_KEY:` Your secret key for encoding JWT tokens.
-- `ALGORITHM:` The algorithm used for encoding JWT tokens.
-- `ACCESS_TOKEN_EXPIRE_MINUTES:1 The expiration time for access     tokens in minutes.
-- `databases_path:` Path to your database file.
-- `databases_name:` Name to your database file like test.db for sqlite3. e.g. `talha.db`
-- `ADMIN_PASSWORD:` Default password for the admin user.
-- `LOG_FILEPATH:` Path for log file storage.
-- “`memory_costs`, `pararellisms`, `hash_length`, `salt_length`: Parameters for Argon2 config”
-- `SALT:` additional to secure password
-- `PEPPER` additional to secure password
+### Notes on environment variables
+
+- `SECRET_KEY`: Secret used for JWT signing. Must be at least 32 characters in production.
+- `ALGORITHM`: JWT algorithm (default `HS256`).
+- `ACCESS_TOKEN_EXPIRE_MINUTES`: Access token lifetime in minutes.
+- `DATABASE_*`: PostgreSQL connection settings.
+- `ALLOWED_ORIGINS`: Comma-separated CORS origins.
+- `KILL_SWITCH_ENABLED`: Enable manual maintenance mode.
+- `RATE_LIMIT_DEFAULT`: Default rate limit, e.g. `100/minute`.
+- `LOG_FILEPATH`: Directory for logs.
+- `MEMORY_COST`, `PARALLELISM`, `HASH_LENGTH`, `SALT_LENGTH`: Argon2 hashing parameters.
+
 ## Database Setup
-Ensure your database schema is set up correctly. This application assumes you have a users table with the following columns:
 
-- **`name`**
-- **`email`**
-- **`password`**
-- **`profile_pic`**
-- **`user_role`**
-- **`disabled`**
+The application uses PostgreSQL with async SQLAlchemy. The user model includes:
 
-### Database Configuration
-The application is pre-configured for PostgreSQL with `asyncpg`. 
+- `id`
+- `name`
+- `email`
+- `password_hash`
+- `profile_pic`
+- `user_role`
+- `is_active`
+- `disabled`
+- `is_deleted`
+- `deleted_at`
+- `created_at`
+- `updated_at`
 
-1. Ensure your `.env` contains the correct `DATABASE_*` credentials.
-2. Apply migrations using Alembic:
-   ```bash
-   alembic upgrade head
-   ```
-3. Modify the ```SQLAlchemy``` database URL in your FastAPI app in ``` App/GetEnvDate.py``` configuration:
-   ```python
-    DATABASE_URL = os.getenv("DATABASE_URL")
+### Apply migrations
 
-   ```
-## Authentication & Account Recovery (Current Flow)
-
-The API now supports:
-- JWT access tokens and refresh tokens
-- Bearer token authentication and optional cookie-based auth via the `CSO` cookie
-- Admin account management for disable, enable, restore, and delete actions
-- Self-service account enablement with password verification
-- Short-lived restore tokens for account restoration or password recovery
-
-### Admin account management routes
-- `POST /admin_access/account/disable/{user_id}` - Disable an account
-- `POST /admin_access/account/enable/{user_id}` - Enable a disabled account
-- `POST /admin_access/account/restore/{user_id}` - Restore a deleted or disabled account
-- `POST /admin_access/account/temp_token/{user_id}` - Create a short-lived token for restoration or password reset
-- `PUT /admin_access/account/password/{user_id}` - Update a user's password
-
-### Notes
-- Short-lived tokens expire in 2 minutes and are intended for recovery flows.
-- The restore token can be used to enable or restore the target account directly.
-- Password-based self-enable and self-delete flows still require the user's current password.
-
-## Endpoints
-### Login
-- **URL:** `/login`
-**Method:** `POST`
-**Description:** `Login with username and password.`
-**Query Parameters:**
-**username:** `The username of the account.`
-**password:** `The password of the account.`
-### **Responses:**
-**`200 OK:`** Returns an access token.
-**`401 Unauthorized:`** Invalid username or password.
-### **Signup**
-- **URL:** `/signup`
-- **Method:** `POST`
-- **Description:** Create a new user account.
-```json
-{
-  "name": "string",
-  "email": "string",
-  "password": "string",
-  "profile_pic": "string",
-  "disable": boolean
-}
-
-```
-##  Responses:
-- **200 OK:** Account created successfully.
-- **500 Internal Server Error:** Failed to sign up due to server error.
-
-## Update Account
-- **URL:** /update_acount
-- **Method:** PATCH
-- **Description:** Update user account details.
-- **Request Body**
-```json
-{
-  "name": "string",
-  "email": "string",
-  "password": "string",
-  "profile_pic": "string",
-  "user_role": "string",
-  "disable": boolean
-}
-
+```bash
+alembic upgrade head
 ```
 
+### Optional: Auto-create an admin user
 
-- **Query Parameters:**
-**`user_id:`** ID of the user to update (admin only).
-- **`Responses:`**
-- **`200 OK:`** Account updated successfully.
-- **`400 Bad Request:`** No update fields provided.
-- **`404 Not Found:`** User not found.
-- **`500 Internal Server Error:`** Error updating account.
+A helper exists in `App/repository/UserRepository.py` named `create_admin_if_not_exists`. Use it to seed a default admin account after migrations.
+
+```python
+import asyncio
+from App.api.dependencies.auth import get_password_hash
+from App.repository.UserRepository import UserRepository
+from App.core.Connector import database
+
+async def create_admin():
+    await database.connect()
+    async with database.session() as session:
+        await UserRepository.create_admin_if_not_exists(
+            session=session,
+            email="admin@example.com",
+            password_hash=get_password_hash("Admin@123456"),
+            name="System Administrator",
+            role="admin",
+            tier="enterprise"
+        )
+
+if __name__ == "__main__":
+    asyncio.run(create_admin())
+```
+
+Run this script after `alembic upgrade head` to ensure the admin account is created.
+
+> The project does not use `App/GetEnvDate.py`; database URL is configured through `App/core/settings.py`.
+
+## Application Structure
+
+The main FastAPI application is in `main.py` and mounts routes under the `/app/v1` prefix.
+
+### Router prefixes
+
+- Authentication: `/app/v1/auth/basic_auth`
+- Admin routes: `/app/v1/admin/admin_access`
+- User routes: `/app/v1/users/users_config`
+
+## Key Endpoints
+
+### Authentication
+
+- `POST /app/v1/auth/basic_auth/login`
+  - Request body: `username`, `password`
+  - Returns access and refresh tokens or sets a `CSO` cookie when using cookie mode.
+
+- `POST /app/v1/auth/basic_auth/signup`
+  - Request body: `name`, `email`, `password`, `profile_pic`
+  - Creates a new user.
+
+### Refresh Token
+
+- `POST /app/v1/users/users_config/refresh`
+  - Request body: `refresh_token`
+  - Returns a new access token.
+
+### Current User
+
+- `GET /app/v1/users/me`
+  - Returns profile data for the authenticated user.
+
+### Admin / Users
+
+- `GET /app/v1/users/users?skip=0&limit=100&search=...`
+  - Admin-only list users endpoint.
+
+### Admin account management
+
+- `POST /app/v1/admin/admin_access/account/disable/{user_id}`
+  - Disable a user account.
+
+- `POST /app/v1/admin/admin_access/account/enable/{user_id}`
+  - Enable a disabled or inactive account.
+
+- `POST /app/v1/admin/admin_access/account/restore/{user_id}`
+  - Restore a deleted or disabled account.
+
+- `POST /app/v1/admin/admin_access/account/temp_token/{user_id}`
+  - Create a short-lived token for account restoration or password reset.
+
+- `PUT /app/v1/admin/admin_access/account/password/{user_id}`
+  - Update a user password.
+
+- `DELETE /app/v1/admin/admin_access/account/{user_id}`
+  - Soft delete a user account.
+
+## Example Request Bodies
+
+### Signup
+
+```json
+{
+  "name": "John Doe",
+  "email": "john@example.com",
+  "password": "StrongPass123!",
+  "profile_pic": "https://example.com/avatar.png"
+}
+```
+
+### Update Account
+
+Use `PATCH /app/v1/admin/admin_access/account/{user_id}` with any of:
+
+```json
+{
+  "name": "New Name",
+  "email": "new@example.com",
+  "password": "NewPass123!",
+  "profile_pic": "https://example.com/new.png",
+  "user_role": "user",
+  "disable": false
+}
+```
+
 ### Delete Account
-- **URL: /delete_account**
-- **Method: DELETE**
-- **`Description: Delete user account.**
-- **`Query Parameters:**
-- **`uid: ID of the user to delete (admin only).**
-- **`password: Password of the account (for non-admin - users).`**
-- ### Responses:
-- ***`200 OK:`*** Account deleted successfully.
-- ***`400 Bad Request:`*** Invalid request parameters.
-- ***`401 Unauthorized:`*** Invalid token or password.
-- ***`404 Not Found:`*** User not found.
-- ***`500 Internal Server Error:`*** Error deleting account.
 
-### Running the Application
+- Admin can delete any user except themselves.
+- Normal users can delete their own account with `password` verification.
 
-To run the FastAPI application, use Uvicorn:
+## Running Locally
 
 ```bash
 uvicorn main:app --reload
 ```
-Replace `main` with the name of your Python file if it's different.D
 
-### Logging
-Logs are stored in the directory specified by **`LOG_FILEPATH`** in the **`.env`** file.
-### Security
-- Passwords are hashed using Argon2.
-- JWT tokens are used for authentication and have an expiration time.
-### Notes
-- Ensure to replace placeholder values in the .env file with your actual configuration.
-- Update database paths and configurations according to your environment.
- 
-### Project Information
-This is a private project named iotNoob by Talha.
+## Logging
+
+Logs are written to the directory configured by `LOG_FILEPATH` in `.env`.
+
+## Security
+
+- Argon2 is used for password hashing.
+- JWT tokens secure authentication.
+- Rate limiting and a kill-switch middleware are included.
+
+## Notes
+
+- Replace placeholder values in `.env` with your real configuration.
+- Ensure PostgreSQL is running and migrations are applied before starting the app.
+- The admin and user routes are mounted under `/app/v1`.
+
+---
+
+Private project: `iotNoob` by Talha.
