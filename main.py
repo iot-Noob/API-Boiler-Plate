@@ -10,7 +10,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from App.api.v1 import app_router
 from App.core.settings import settings
 from App.core.LoggingInit import get_core_logger
-
+from App.core.CreateAdmin import create_admin
 # Initialize Logger
 logger = get_core_logger(__name__)
 
@@ -19,8 +19,14 @@ limiter = Limiter(
     key_func=get_remote_address,
     default_limits=[settings.RATE_LIMIT_DEFAULT] if settings.RATE_LIMIT_DEFAULT else ["100/minute"]
 )
+@asynccontextmanager
+async def lifespan(app:FastAPI):
+    await create_admin()
+    logger.info("App started")
+    yield
+    logger.info("app end")
 
-app = FastAPI(title="API Basic Boilerplate", version="0.0.1")
+app = FastAPI(title="API Basic Boilerplate", version="0.0.1",lifespan=lifespan)
 
 # State and Exception Handlers
 app.state.limiter = limiter
@@ -84,12 +90,6 @@ app.add_middleware(
 # 2. Rate Limiter Middleware (Inner)
 app.add_middleware(SlowAPIMiddleware)
 
-@asynccontextmanager
-async def lifespan():
-    
-    logger.info("App started")
-    yield
-    logger.info("app end")
 
 @app.get("/health", status_code=status.HTTP_200_OK, tags=["System"])
 async def health_check():

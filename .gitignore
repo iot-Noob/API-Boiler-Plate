@@ -41,3 +41,4 @@ logs
 *.csr
 keys
 *.conda*
+QUERY

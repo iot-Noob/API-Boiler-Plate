@@ -98,6 +98,7 @@ async def login(
                 max_age=expires_in_seconds,
                 path="/",
                 domain=None,
+                
             )
             
             
@@ -181,6 +182,19 @@ async def signup(
         # Set default values
         user_dict["user_role"] = "user"
         user_dict["is_active"] = True
+        user_dict["permissions"] = {
+            # ===== USER SELF-MANAGEMENT =====
+            "user.view.self": True,
+            "user.update.self": True,
+            "user.update.email": True,
+            "user.update.password": True,
+            "user.update.profile": True,
+            "user.delete.self": True,
+            "user.history.view": True,
+            "user.history.delete": True,
+            "user.self.enable": True,
+            "user.disable.self": True,
+        }
         
         user = await repo.create(user_dict)
         
@@ -197,7 +211,19 @@ async def signup(
             "id": user.id,
             "name": user.name,
             "email": user.email,
-            "profile_pic": user.profile_pic or None  # Ensure None if empty
+            "profile_pic": user.profile_pic or None,  # Ensure None if empty
+            "permissions":{ 
+            "user.view.self": True,
+            "user.update.self": True,
+            "user.update.email": True,
+            "user.update.password": True,
+            "user.update.profile": True,
+            "user.delete.self": True,
+            "user.history.view": True,
+            "user.history.delete": True,
+            "user.self.enable": True,
+            "user.disable.self": True,
+            }
         }
         
         # Validate with UserResponse model

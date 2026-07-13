@@ -238,6 +238,7 @@ async def get_current_user_slt(
         logger.debug(f"Authenticated user: {user.email} (ID: {user.id})")
         
         return {
+            "permissions":user.permissions,
             "id": user.id,
             "user_id": user.id, 
             "email": user.email,
@@ -382,6 +383,7 @@ async def get_current_user(
         logger.debug(f"Authenticated user: {user.email} (ID: {user.id})")
         
         return {
+            "permissions":user.permissions,
             "id": user.id,
             "user_id": user.id, 
             "email": user.email,

@@ -1,5 +1,5 @@
 # App/models/user.py
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, func
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, func,JSON
 from sqlalchemy.orm import relationship
 from App.core.Connector import Base  # Import from new connector
 
@@ -16,5 +16,6 @@ class User(Base):  # Changed from Users to User (singular, PEP8)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), nullable=True)
     disabled=Column(Boolean,default=False)
+    permissions = Column(JSON, default={})
     is_deleted = Column(Boolean, default=False)
     deleted_at = Column(DateTime, nullable=True)

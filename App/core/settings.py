@@ -15,7 +15,9 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore"
     )
-    
+    ADMIN_EMAIL:str=Field(...)
+    ADMIN_USERNAME:str=Field(...)
+    ADMIN_PASSWORD:str=Field(...)
     # Security
     SECRET_KEY: Optional[SecretStr] = Field(
         default=None,
