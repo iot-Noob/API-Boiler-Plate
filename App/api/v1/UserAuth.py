@@ -11,7 +11,9 @@ from App.api.dependencies.auth import (
     authenticate_user,
     create_access_token,
     create_refresh_token,
-
+    cookie_scheme,
+    oauth2_scheme,
+    refresh_cookie_scheme,
     get_password_hash,
 
     validate_password_strength
@@ -244,3 +246,59 @@ async def signup(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Registration failed: {str(e)}"
         )
+
+# App/api/v1/UserAuth.py — add below signup()
+
+
+@router.post(
+    "/logout",
+    status_code=status.HTTP_200_OK,
+    summary="Logout",
+    description="Clear authentication cookies. Idempotent — safe to call repeatedly.",
+)
+async def logout(
+    res: Response,
+    cookie_auth: Optional[str] = Depends(cookie_scheme),
+    refresh_auth: Optional[str] = Depends(refresh_cookie_scheme),
+):
+    """
+    Logout for cookie-based login.
+
+    Clears:
+      - Access token cookie (CSO)
+      - Refresh token cookie (refresh_token)
+
+    Only clears cookies that are actually present — does not blindly
+    issue delete instructions for cookies that were never there.
+
+    No server-side revocation — a copied/stolen refresh token
+    remains technically valid until it expires.
+    """
+    if not cookie_auth and not refresh_auth:
+        logger.info("Logout called with no active session cookies present")
+        return {
+            "status": "success",
+            "message": "Already logged out",
+            "already_logged_out": True,
+        }
+
+    if cookie_auth:
+        res.delete_cookie(
+            key="CSO",
+            path="/",
+            domain=None,
+        )
+
+    if refresh_auth:
+        res.delete_cookie(
+            key="refresh_token",
+            path="/users_config/refresh",
+            domain=None,
+        )
+
+    logger.info("User logged out (cookies cleared)")
+
+    return {
+        "status": "success",
+        "message": "Logged out successfully",
+    }
