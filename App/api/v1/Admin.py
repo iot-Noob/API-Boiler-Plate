@@ -319,6 +319,8 @@ async def enable_account(
         
         # CASE 1: SLT Token → Only its OWN user
         if is_slt_token:
+            if current_user.get("token_purpose") != "account_restoration":
+                raise HTTPException(403, "SLT token is not valid for account enablement")
             if cur_id != user_id:
                 raise HTTPException(403, f"SLT token can only enable user {cur_id}, not {user_id}")
             # ✅ SLT has permission → Continue
@@ -452,14 +454,14 @@ async def temp_token_maker(
     """
     try:
         repo = UserRepository(db)
-        
+
         # 1. Check if admin
         if current_user.get("role") != "admin":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Only admin can access this"
             )
-        
+
         # 2. Get target user
         target_user = await repo.get_by_id(user_id)
         if not target_user:
@@ -467,27 +469,24 @@ async def temp_token_maker(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found"
             )
-        
+
         # ✅ 3. Check if user needs token
         #    - Password restore: ALWAYS allowed (bypasses status check)
         #    - Account restoration: Only if disabled/inactive/deleted
-        
+        token_purpose = "password_restore" if restore_passwd else "account_restoration"
+
         if restore_passwd:
-            # ✅ Password restore mode - bypass all status checks!
             logger.info(f"🔑 Password restore token requested for user {user_id}")
-            # Allow even if user is active, not disabled, etc.
-            
         else:
-            # ✅ Account restoration mode - only for disabled/inactive/deleted
             if not (target_user.disabled or not target_user.is_active or target_user.is_deleted):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="User is already active and valid. No restoration needed."
                 )
-        
-        # ✅ 4. Create the token
-        temp_token = await create_short_live_token(user_id, db)
-        
+
+        # ✅ 4. Create the token with the intended purpose
+        temp_token = await create_short_live_token(user_id, db, purpose=token_purpose)
+
         if cookie_login:
             response.set_cookie(
                 key="CSO",
@@ -499,13 +498,13 @@ async def temp_token_maker(
                 path="/",
                 domain=None,
             )
-            
+
             return {
                 "status": "success",
                 "message": "Temporary token created and set as cookie",
                 "user_id": target_user.id,
                 "user_name": target_user.name,
-                "purpose": "password_restore" if restore_passwd else "account_restoration",
+                "purpose": token_purpose,
                 "expires_in_minutes": 2
             }
         else:
@@ -519,7 +518,7 @@ async def temp_token_maker(
                     "is_active": target_user.is_active,
                     "is_deleted": target_user.is_deleted
                 } if not restore_passwd else None,
-                "purpose": "password_restore" if restore_passwd else "account_restoration",
+                "purpose": token_purpose,
                 "temp_token": temp_token,
                 "expires_in_minutes": 2
             }
@@ -719,8 +718,11 @@ async def restore_account(
         # ✅ STEP 1: SLT TOKEN BYPASS (Highest Priority!)
         # ============================================================
         if is_slt_token:
+            if current_user.get("token_purpose") != "account_restoration":
+                raise HTTPException(403, "SLT token is not valid for account restoration")
+
             slt_user_id = current_user.get("id")
-            
+
             # SLT token can ONLY restore its OWN user
             if not slt_user_id == user_id:
                 logger.warning(f"❌ SLT token {slt_user_id} tried to restore user {user_id}")
@@ -728,7 +730,7 @@ async def restore_account(
                     403,
                     f"SLT token can only restore user {slt_user_id}, not {user_id}"
                 )
-            
+
             # ✅ SLT token bypasses ALL checks - proceed directly to restore!
             logger.info(f"✅ SLT token bypass - restoring user {user_id}")
             
@@ -884,17 +886,19 @@ async def update_password(
         # CASE 1: SLT TOKEN (Only for its OWN user!)
         # ============================================================
         if is_slt_token:
+            if current_user.get("token_purpose") != "password_restore":
+                raise HTTPException(403, "SLT token is not valid for password reset")
             if slt_user_id != user_id:
                 raise HTTPException(
                     403,
                     f"SLT token can only update password for user {slt_user_id}, not {user_id}"
                 )
-            
+
             new_hash = get_password_hash(new_password)
             success = await repo.update_password_hash(user_id, new_hash)
             if not success:
                 raise HTTPException(500, "Failed to update password with SLT token")
-            
+
             return {
                 "status": "success",
                 "message": f"Password updated via SLT token for user {user_id}",

@@ -27,7 +27,7 @@ pwd_context = PasswordHasher(
 # Use OAuth2PasswordBearer for standard OAuth2 flows
 oauth2_scheme =HTTPBearer(auto_error=False)
 cookie_scheme=APIKeyCookie(name="CSO",auto_error=False)
- 
+refresh_cookie_scheme = APIKeyCookie(name="refresh_token", auto_error=False)
 # ========== PASSWORD FUNCTIONS ==========
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -114,6 +114,20 @@ def decode_jwt(token: str) -> Optional[Dict[str, Any]]:
         logger.error(f"Unexpected token decode error: {e}")
         return None
 
+def decode_jwt_ignore_expiry(token: str) -> Optional[Dict[str, Any]]:
+    """Decode JWT verifying signature only — used for cross-checking claims (e.g. user_id) even if expired."""
+    try:
+        payload = jwt.decode(
+            token,
+            settings.secret_key_str,
+            algorithms=[settings.ALGORITHM],
+            options={"verify_exp": False}
+        )
+        return payload
+    except jwt.JWTError as e:
+        logger.debug(f"JWT decode (ignore expiry) failed: {e}")
+        return None
+
 # ========== DEPENDENCY INJECTIONS ========== 
 async def get_current_user_slt(
 
@@ -153,7 +167,7 @@ async def get_current_user_slt(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authentication token found"
         )
-    
+
     # ✅ Clean token (remove "Bearer " prefix if present)
     if token.startswith("Bearer "):
         token = token[7:]
@@ -544,34 +558,35 @@ async def refresh_access_token(refresh_token: str, db: AsyncSession) -> Optional
         logger.error(f"Token refresh error: {e}")
         return None
 
-async def create_short_live_token(user_id: int, db: AsyncSession) -> Optional[str]:
+async def create_short_live_token(
+    user_id: int,
+    db: AsyncSession,
+    purpose: str = "restore_account",
+) -> Optional[str]:
     """
-    Create a short-lived token (2 minutes) for account restoration.
-    Uses the same logic as refresh_access_token but with SLT type and shorter expiry.
+    Create a short-lived token (2 minutes) for a specific self-service action.
     """
     try:
         repo = UserRepository(db)
         user = await repo.get_by_id(user_id)
-        
+
         if not user:
             return None
-        
-        # ✅ Create short-live token (2 minutes expiry)
+
         short_token = create_access_token(
             data={
                 "sub": user.email,
-                "user_id": user.id,  
+                "user_id": user.id,
                 "name": user.name,
                 "role": user.user_role,
                 "types": "slts",
-                "purpose": "restore_account"
+                "purpose": purpose,
             },
-            
-            expires_delta=timedelta(minutes=2)  # ← 2 minutes!
+            expires_delta=timedelta(minutes=2),
         )
-        
+
         return short_token
-        
+
     except Exception as e:
         logger.error(f"Short-live token creation error: {e}")
         return None

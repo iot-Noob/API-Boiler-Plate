@@ -88,24 +88,30 @@ async def login(
         
         # ========== COOKIE MODE ==========
         if cookie_login:
-            # ✅ Set access token cookie
             res.set_cookie(
                 key="CSO",
-                value=access_token,  # ✅ Now defined!
+                value=access_token,
                 httponly=True,
                 secure=False,
                 samesite="lax",
                 max_age=expires_in_seconds,
                 path="/",
                 domain=None,
-                
             )
-            
-            
-            
-            # ✅ Return user data (tokens in cookies)
+            res.set_cookie(
+                key="refresh_token",
+                value=refresh_token,
+                httponly=True,
+                secure=False,
+                samesite="lax",
+                max_age=7 * 24 * 60 * 60,
+                path="/users_config/refresh",
+                domain=None,
+            )
+
             return {
-                "token":access_token,
+                "token": access_token,
+                "refresh_token": refresh_token,
                 "status": "success",
                 "message": "Logged in successfully",
                 "user": {
