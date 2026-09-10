@@ -42,3 +42,6 @@ logs
 keys
 *.conda*
 QUERY
+.venv**
+*.python-version
+pyproject.toml
