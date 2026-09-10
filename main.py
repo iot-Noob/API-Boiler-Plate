@@ -11,6 +11,8 @@ from App.api.v1 import app_router
 from App.core.settings import settings
 from App.core.LoggingInit import get_core_logger
 from App.core.CreateAdmin import create_admin
+from App.core.RedisConnector import redis_client
+
 # Initialize Logger
 logger = get_core_logger(__name__)
 
@@ -22,8 +24,10 @@ limiter = Limiter(
 @asynccontextmanager
 async def lifespan(app:FastAPI):
     await create_admin()
+    await redis_client.connect()
     logger.info("App started")
     yield
+    await redis_client.disconnect()
     logger.info("app end")
 
 app = FastAPI(title="API Basic Boilerplate", version="0.0.1",lifespan=lifespan)

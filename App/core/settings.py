@@ -15,6 +15,14 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore"
     )
+    COOKIE_SECURE: bool = Field(
+        default=True,
+        description="Whether to set the 'Secure' flag on cookies"
+    )
+    HTTPS_ONLY: bool = Field(
+        default=True,
+        description="Whether to enforce HTTPS-only connections"
+    )
     ADMIN_EMAIL:str=Field(...)
     ADMIN_USERNAME:str=Field(...)
     ADMIN_PASSWORD:str=Field(...)
@@ -24,7 +32,7 @@ class Settings(BaseSettings):
         min_length=32,
         description="Secret key for JWT token signing"
     )
-    
+    REDIS_URL: str = "redis://127.0.0.1:6379/0"
     ALGORITHM: str = Field(
         default="HS256",
         pattern="^(HS256|HS384|HS512|RS256|RS384|RS512|ES256|ES384|ES512|PS256|PS384|PS512)$"

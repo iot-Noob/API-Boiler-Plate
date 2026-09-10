@@ -93,8 +93,8 @@ async def login(
             res.set_cookie(
                 key="CSO",
                 value=access_token,
-                httponly=True,
-                secure=False,
+                httponly=settings.HTTPS_ONLY,
+                secure=settings.COOKIE_SECURE,
                 samesite="lax",
                 max_age=expires_in_seconds,
                 path="/",
@@ -103,8 +103,8 @@ async def login(
             res.set_cookie(
                 key="refresh_token",
                 value=refresh_token,
-                httponly=True,
-                secure=False,
+                httponly=settings.HTTPS_ONLY,
+                secure=settings.COOKIE_SECURE,
                 samesite="lax",
                 max_age=7 * 24 * 60 * 60,
                 path="/users_config/refresh",
