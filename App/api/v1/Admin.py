@@ -43,6 +43,7 @@ def _is_restore_token(current_user: Dict[str, Any]) -> bool:
     description="Update user information. Admin can update any user, users can only update themselves."
 )
 async def update_account(
+    request:Request,
     user_id: int,
     update_data: UpdateUser,
     current_user: Dict[str, Any] = Depends(require_permission(
@@ -182,6 +183,7 @@ async def update_account(
     
 )
 async def disable_account(
+    request:Request,
     user_id: int,
     password: Optional[str] = Query(None, description="Required for non-admin users"),
     current_user: Dict[str, Any] = Depends(get_current_user),  # ✅ Just get user, do manual checks
@@ -267,6 +269,7 @@ async def disable_account(
  
 @admin_router.post("/account/enable/{user_id}")
 async def enable_account(
+    request:Request,
     user_id: int,
     password: Optional[str] = Query(None),
     current_user: Dict[str, Any] = Depends(
@@ -432,6 +435,7 @@ async def enable_account(
     description="Make temporary token expire in 2 min for user to restore disabled/deleted account or reset password."
 )
 async def temp_token_maker(
+    request:Request,
     response: Response,
     user_id: int,
     current_user: Dict[str, Any] = Depends(require_permission(required_permissions=[
@@ -540,6 +544,7 @@ async def temp_token_maker(
     description="Allows administrators to reset the system from safety mode after an internal error."
 )
 async def reset_auto_kill(
+    
     request: Request,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
@@ -561,6 +566,7 @@ async def reset_auto_kill(
     description="If normal user delete his accoutn but need password if admin can delete any user account"
 )
 async def delete_account(
+    request:Request,
     user_id: int,
     password: Optional[str] = None,
     current_user: Dict[str, Any] = Depends(
@@ -667,6 +673,7 @@ async def delete_account(
     description="Restore a soft-deleted or disabled account. Admin can restore any user. Users can restore themselves only with SLT token."
 )
 async def restore_account(
+    request:Request,
     user_id: int,
     current_user: Dict[str, Any] = Depends(require_permission(
             required_permissions=[
@@ -822,6 +829,7 @@ async def restore_account(
     description="Admin can update any user password. Normal users update their own password. SLT token can only update its own user's password."
 )
 async def update_password(
+    request:Request,
     user_id: int,
     new_password: str,
     current_user: Dict[str, Any] = Depends(
@@ -965,6 +973,7 @@ async def update_password(
 
 @admin_router.get("/get_all_permissions")
 async def get_all_permissions(
+    request:Request,
     current_user: Dict[str, Any] = Depends(require_permission(required_permissions=[Permission.ADMIN_USERS_PROMOTE],mode="any",bypass_admin=False)),  # ← Normal auth
     db=Depends(get_db)
 ):
@@ -985,6 +994,7 @@ async def get_all_permissions(
 
 @admin_router.post("/set_permissions")
 async def setPermissions(
+    request:Request,
     pm: PermissionModel,
     current_user: Dict[str, Any] = Depends(
         require_permission(
@@ -1048,6 +1058,7 @@ async def setPermissions(
 
 @admin_router.post("/set_permissions_bulk")
 async def setPermissionsBulk(
+    request:Request,
     bulk_pm: BulkPermissionModel,
     current_user: Dict[str, Any] = Depends(
         require_permission([Permission.ADMIN_USERS_PROMOTE], bypass_admin=False)
@@ -1150,6 +1161,7 @@ async def setPermissionsBulk(
 
 @admin_router.get("/users/permissions")
 async def getUsersPermissions(
+    request:Request,
     user_id: Optional[int] = Query(None, description="Specific user ID to get permissions for"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum records to return"),
@@ -1230,6 +1242,7 @@ async def getUsersPermissions(
 
 @admin_router.delete("/remove_permissions")
 async def removePermissions(
+    request:Request,
     data: RemovePermissionsModel,
     current_user: Dict[str, Any] = Depends(require_permission(
         required_permissions=[Permission.ADMIN_USERS_PROMOTE],

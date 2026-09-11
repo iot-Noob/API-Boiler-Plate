@@ -13,6 +13,7 @@ from App.repository.UserRepository import UserRepository
 from App.core.LoggingInit import get_core_logger
 from fastapi.security import HTTPAuthorizationCredentials,APIKeyCookie 
 from App.core import token_store
+import uuid
 # Initialize logger
 logger = get_core_logger(__name__)
 
@@ -510,7 +511,7 @@ def validate_password_strength(password: str) -> bool:
     
     return True
 
-def create_refresh_token(data: Dict[str, Any]) -> str:
+def create_refresh_token(data: Dict[str, Any],family_id:str) -> str:
     """Create refresh token (longer expiry)"""
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(days=7)  # 7 days
@@ -518,7 +519,10 @@ def create_refresh_token(data: Dict[str, Any]) -> str:
     to_encode.update({
         "exp": expire,
         "iat": datetime.now(timezone.utc),
-        "type": "refresh"
+        "type": "refresh",
+        "jti":str(uuid.uuid4()),
+        "family": family_id,
+        
     })
     
     return jwt.encode(
@@ -527,37 +531,141 @@ def create_refresh_token(data: Dict[str, Any]) -> str:
         algorithm=settings.ALGORITHM
     )
 
-async def refresh_access_token(refresh_token: str, db: AsyncSession) -> Optional[str]:
-    """Refresh access token using refresh token"""
+# async def refresh_access_token(refresh_token: str, db: AsyncSession) -> Optional[str]:
+#     """Refresh access token using refresh token"""
+#     try:
+#         payload = decode_jwt(refresh_token)
+#         if not payload or payload.get("type") != "refresh":
+#             return None
+        
+#         user_id = payload.get("user_id")
+#         if not user_id:
+#             return None
+        
+#         repo = UserRepository(db)
+#         user = await repo.get_by_id(user_id)
+        
+#         if not user or user.disabled or not user.is_active:
+#             return None
+        
+#         # Create new access token
+#         new_access_token = create_access_token({
+#             "sub": user.email,
+#             "user_id": user.id,
+#             "name": user.name,
+#             "role": user.user_role
+#         })
+        
+#         return new_access_token
+        
+#     except Exception as e:
+#         logger.error(f"Token refresh error: {e}")
+#         return None
+
+async def issue_refresh_token(
+    user_id: int,
+    email: str,
+    family_id: str,
+) -> str:
+    """Mint + store a refresh token. Single place for both."""
+    refresh_token = create_refresh_token(
+        data={"sub": email, "user_id": user_id},
+        family_id=family_id,
+    )
+
+    payload = jwt.decode(
+        refresh_token,
+        settings.secret_key_str,
+        algorithms=[settings.ALGORITHM],
+    )
+
+    await token_store.store_refresh(
+        jti=payload["jti"],
+        user_id=user_id,
+        family_id=family_id,
+        ttl=7 * 24 * 3600,
+    )
+
+    return refresh_token
+
+async def refresh_access_token(
+    refresh_token: str,
+    db: AsyncSession,
+) -> Optional[Dict[str, str]]:
+    """
+    Validate + rotate refresh token.
+    Returns {access_token, refresh_token} or None.
+    """
+    # 1. Decode (raises HTTPException on invalid/expired)
     try:
         payload = decode_jwt(refresh_token)
-        if not payload or payload.get("type") != "refresh":
-            return None
-        
-        user_id = payload.get("user_id")
-        if not user_id:
-            return None
-        
-        repo = UserRepository(db)
-        user = await repo.get_by_id(user_id)
-        
-        if not user or user.disabled or not user.is_active:
-            return None
-        
-        # Create new access token
-        new_access_token = create_access_token({
-            "sub": user.email,
-            "user_id": user.id,
-            "name": user.name,
-            "role": user.user_role
-        })
-        
-        return new_access_token
-        
-    except Exception as e:
-        logger.error(f"Token refresh error: {e}")
+    except HTTPException:
+        logger.debug("Refresh token invalid or expired")
         return None
 
+    if payload.get("type") != "refresh":
+        return None
+
+    jti = payload.get("jti")
+    family_id = payload.get("family")
+    if not jti:
+        return None
+
+    # 2. Reuse detection — if already revoked, kill the whole family
+    if await token_store.is_refresh_revoked(jti):
+        logger.warning(f"Refresh reuse detected: jti={jti} family={family_id}")
+        if family_id:
+            await token_store.revoke_family(family_id)
+        return None
+
+    # 3. Atomic consume — only one caller wins
+    meta = await token_store.consume_refresh(jti)
+    if not meta:
+        return None
+
+    user_id = meta.get("user_id")
+    if not user_id:
+        return None
+
+    # 4. Load user
+    repo = UserRepository(db)
+    user = await repo.get_by_id(user_id)
+    if not user or user.disabled or not user.is_active or user.is_deleted:
+        return None
+
+    # 5. Rotate — new access + new refresh, SAME family
+    family = family_id or meta.get("family_id") or str(uuid.uuid4())
+
+    new_access = create_access_token({
+        "sub": user.email,
+        "user_id": user.id,
+        "name": user.name,
+        "role": user.user_role,
+    })
+
+    new_refresh = create_refresh_token(
+        data={"sub": user.email, "user_id": user.id},
+        family_id=family,
+    )
+
+    # 6. Store new refresh in Redis
+    new_jti = jwt.decode(
+        new_refresh,
+        settings.secret_key_str,
+        algorithms=[settings.ALGORITHM],
+    )["jti"]
+
+    await token_store.store_refresh(
+        jti=new_jti,
+        user_id=user.id,
+        family_id=family,
+        ttl=7 * 24 * 3600,
+    )
+
+    return {
+        "access_token": new_access,
+        "refresh_token": new_refresh,
+    }
 async def create_short_live_token(
     user_id: int,
     db: AsyncSession,

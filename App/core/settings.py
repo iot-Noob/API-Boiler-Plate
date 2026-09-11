@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import SecretStr, Field, PostgresDsn, field_validator
 from typing import Optional, Any
 import os
+from App.core.size_parser import parse_size
 
 
 class Settings(BaseSettings):
@@ -44,7 +45,11 @@ class Settings(BaseSettings):
         le=10080,
         description="Access token expiration time in minutes"
     )
-    
+    MAX_BODY_SIZE: int = Field(
+        default=1024 * 1024,
+        ge=1,
+        description="Maximum request body size in bytes"
+    )
     # Advanced Production Features
     KILL_SWITCH_ENABLED: bool = Field(
         default=False,
@@ -193,6 +198,20 @@ class Settings(BaseSettings):
         
         return v
     
+    @field_validator('MAX_BODY_SIZE', mode='before')
+    @classmethod
+    def validate_max_body_size(cls, v: Any) -> int:
+        """Parse '1MB', '512KB', '2GB' to bytes."""
+        if v is None:
+            return 1024 * 1024
+        if isinstance(v, str):
+            return parse_size(v)
+        if isinstance(v, int):
+            if v <= 0:
+                raise ValueError(f"MAX_BODY_SIZE must be positive, got {v}")
+            return v
+        raise ValueError(f"MAX_BODY_SIZE must be str or int, got {type(v)}")
+
     @field_validator('RATE_LIMIT_DEFAULT', mode='before')
     @classmethod
     def validate_rate_limit(cls, v: Any) -> Any:
@@ -271,7 +290,6 @@ class Settings(BaseSettings):
             "pool_recycle": self.DATABASE_POOL_RECYCLE,
             "pool_timeout": self.DATABASE_POOL_TIMEOUT,
         }
-
 
 # Create singleton instance
 settings = Settings()

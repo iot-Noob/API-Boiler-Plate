@@ -1,11 +1,14 @@
 # App/api/v1/UserAuth.py - PROFESSIONAL REFACTORED VERSION
-
+from jose import jwt
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Body,Response
 from App.schemas.AuthScheema import TokenResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from App.core.LoggingInit import get_core_logger
 from App.core.Connector import get_db
 from App.models.UserAuthModel import User,UpdateUser,LoginUser
+from App.core import token_store
+from datetime import datetime, timezone
+import uuid
 from App.schemas.AuthScheema import UserResponse
 from App.api.dependencies.auth import (
     authenticate_user,
@@ -65,7 +68,7 @@ async def login(
             )
         
         # ✅ CREATE TOKENS FIRST - BEFORE ANY CONDITION!
-        
+        family_id = str(uuid.uuid4())
         access_token = create_access_token(
             data={
                 "type":"token",
@@ -81,9 +84,20 @@ async def login(
                 "type":"rf_token",
                 "sub": user["email"],
                 "user_id": user["id"]
-            }
+            },
+            family_id=family_id,
         )
-        
+        jti = jwt.decode(
+            refresh_token,
+            settings.secret_key_str,
+            algorithms=[settings.ALGORITHM],
+        )["jti"]
+        await token_store.store_refresh(
+            jti=jti,
+            user_id=user["id"],
+            family_id=family_id,
+            ttl=7 * 24 * 3600,
+        )
         expires_in_seconds = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
         
         logger.info(f"User logged in successfully: {user['email']}")
@@ -254,7 +268,7 @@ async def signup(
     "/logout",
     status_code=status.HTTP_200_OK,
     summary="Logout",
-    description="Clear authentication cookies. Idempotent — safe to call repeatedly.",
+    description="Revoke refresh token in Redis and clear cookies. Idempotent.",
 )
 async def logout(
     res: Response,
@@ -264,16 +278,35 @@ async def logout(
     """
     Logout for cookie-based login.
 
-    Clears:
-      - Access token cookie (CSO)
-      - Refresh token cookie (refresh_token)
+    1. Revokes the refresh token in Redis (so it dies server-side)
+    2. Clears the access + refresh cookies
 
-    Only clears cookies that are actually present — does not blindly
-    issue delete instructions for cookies that were never there.
-
-    No server-side revocation — a copied/stolen refresh token
-    remains technically valid until it expires.
+    Idempotent — safe to call repeatedly.
     """
+    # ---- NEW: revoke refresh token in Redis ----
+    if refresh_auth:
+        try:
+            payload = jwt.decode(
+                refresh_auth,
+                settings.secret_key_str,
+                algorithms=[settings.ALGORITHM],
+            )
+            jti = payload.get("jti")
+            exp = payload.get("exp")
+            if jti and exp:
+                ttl = max(int(exp - datetime.now(timezone.utc).timestamp()), 1)
+                await token_store.revoke_refresh(jti, ttl)
+                logger.info(f"Revoked refresh token: {jti}")
+            else:
+                logger.debug("Logout: refresh token missing jti/exp")
+        except HTTPException:
+            logger.debug("Logout: refresh token already invalid/expired")
+        except Exception as e:
+            # Redis down or unexpected — log but still clear cookies
+            logger.error(f"Logout revocation error (non-fatal): {e}")
+    # ---- END NEW ----
+
+    # Existing logic — unchanged
     if not cookie_auth and not refresh_auth:
         logger.info("Logout called with no active session cookies present")
         return {

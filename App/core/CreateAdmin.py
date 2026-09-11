@@ -69,10 +69,7 @@ async def create_admin():
             )
             
             if admin:
-                print(f"✅ Admin created/promoted: {admin_email}")
-                print(f"   Name: {admin.name}")
-                print(f"   Role: {admin.user_role}")
-                print(f"   Password: {settings.ADMIN_PASSWORD}")
+                print(f"✅ Admin user created or already exists: {admin.email}")
             else:
                 print("❌ Failed to create admin")
                 

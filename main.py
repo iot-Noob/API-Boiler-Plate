@@ -1,103 +1,119 @@
 from contextlib import asynccontextmanager
 import os
-from fastapi import FastAPI, status, Request
+
+from sqlalchemy import text
+from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
 from App.api.v1 import app_router
 from App.core.settings import settings
 from App.core.LoggingInit import get_core_logger
 from App.core.CreateAdmin import create_admin
 from App.core.RedisConnector import redis_client
-
-# Initialize Logger
+from App.core.Connector import AsyncSession, get_db
+from App.middleware.rate_limit_middleware import GlobalRateLimitMiddleware
+from App.middleware.kill_switch_middleware import KillSwitchMiddleware
+from App.middleware.body_size_middleware import BodySizeLimitMiddleware
+from App.middleware.request_id_middleware import RequestIDMiddleware
+from App.core.size_parser import parse_size
 logger = get_core_logger(__name__)
 
-# Initialize Limiter
-limiter = Limiter(
-    key_func=get_remote_address,
-    default_limits=[settings.RATE_LIMIT_DEFAULT] if settings.RATE_LIMIT_DEFAULT else ["100/minute"]
-)
+
 @asynccontextmanager
-async def lifespan(app:FastAPI):
+async def lifespan(app: FastAPI):
     await create_admin()
     await redis_client.connect()
     logger.info("App started")
     yield
     await redis_client.disconnect()
-    logger.info("app end")
+    logger.info("App ended")
 
-app = FastAPI(title="API Basic Boilerplate", version="0.0.1",lifespan=lifespan)
 
-# State and Exception Handlers
-app.state.limiter = limiter
-app.state.auto_kill_enabled = False  # Global flag for automatic protection
+app = FastAPI(title="API Basic Boilerplate", version="0.0.1", lifespan=lifespan)
 
-@app.exception_handler(RateLimitExceeded)
-async def custom_rate_limit_handler(request: Request, exc: RateLimitExceeded):
-    """Robust rate limit handler that avoids AttributeError if exc is not as expected"""
-    detail = getattr(exc, "detail", str(exc))
+
+# ---------- Exception handlers ----------
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    req_id = getattr(request.state, "request_id", "-")
     return JSONResponse(
-        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-        content={"error": f"Rate limit exceeded: {detail}"}
+        status_code=exc.status_code,
+        content={"error": exc.detail, "status": exc.status_code, "request_id": req_id},
+        headers=getattr(exc, "headers", None),
     )
 
-@app.middleware("http")
-async def kill_switch_middleware(request: Request, call_next):
-    """Global middleware for emergency kill switch (Maintenance Mode)"""
-    # Whitelist System and Documentation endpoints
-    path = request.url.path
-    is_whitelisted = (
-        path == "/health" or 
-        path.startswith("/docs") or 
-        path.startswith("/redoc") or 
-        path.startswith("/openapi.json")
-    )
-    
-    # Check both manual and automatic kill switches
-    is_killed = settings.KILL_SWITCH_ENABLED or app.state.auto_kill_enabled
-    
-    if is_killed and not is_whitelisted:
-        return JSONResponse(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            content={
-                "detail": "Service is temporarily unavailable due to maintenance.",
-                "type": "auto_kill" if app.state.auto_kill_enabled else "manual_kill"
-            }
-        )
-    
-    try:
-        response = await call_next(request)
-        return response
-    except Exception as e:
-        logger.error(f"CRITICAL: Unhandled exception detected. Triggering AUTO-KILL. Error: {e}")
-        app.state.auto_kill_enabled = True
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"detail": "An internal error occurred. System has entered safety mode."}
-        )
 
-# Add Middlewares (Order: Outermost -> Innermost)
-# 1. CORS (Outermost)
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    req_id = getattr(request.state, "request_id", "-")
+    return JSONResponse(
+        status_code=422,
+        content={"error": "Validation failed", "details": exc.errors(), "request_id": req_id},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    req_id = getattr(request.state, "request_id", "-")
+    logger.exception(f"[{req_id}] Unhandled exception: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Internal server error", "request_id": req_id},
+    )
+
+
+# ---------- Custom middlewares (order: last added = outermost) ----------
+ 
+app.add_middleware(RequestIDMiddleware, header_name="X-Request-ID")            # innermost
+app.add_middleware(BodySizeLimitMiddleware, max_size=settings.MAX_BODY_SIZE)
 app.add_middleware(
+    GlobalRateLimitMiddleware,
+    default_limit=settings.RATE_LIMIT_DEFAULT or "100/minute",
+)
+app.add_middleware(KillSwitchMiddleware, recovery_seconds=60)
+
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+app.add_middleware(                                                                  # outermost
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
-# 2. Rate Limiter Middleware (Inner)
-app.add_middleware(SlowAPIMiddleware)
+
+# ---------- Health check ----------
+@app.get("/health", tags=["System"])
+async def health_check(request: Request, db: AsyncSession = Depends(get_db)):
+    checks = {"db": "unknown", "redis": "unknown"}
+    overall = "healthy"
+
+    try:
+        await db.execute(text("SELECT 1"))
+        checks["db"] = "ok"
+    except Exception as e:
+        checks["db"] = "error"
+        overall = "unhealthy"
+        logger.error(f"Health: DB check failed: {e}")
+
+    try:
+        r = await redis_client.health_check()
+        checks["redis"] = r["status"]
+        if not r["connected"]:
+            overall = "unhealthy"
+    except Exception as e:
+        checks["redis"] = "error"
+        overall = "unhealthy"
+        logger.error(f"Health: Redis check failed: {e}")
+
+    return JSONResponse(
+        status_code=200 if overall == "healthy" else 503,
+        content={"status": overall, "version": "0.0.1", "checks": checks},
+    )
 
 
-@app.get("/health", status_code=status.HTTP_200_OK, tags=["System"])
-async def health_check():
-    """Simple health check endpoint for monitoring"""
-    return {"status": "healthy", "version": "0.0.1"}
-
+# ---------- Routers LAST ----------
 app.include_router(app_router, prefix="/app/v1")
