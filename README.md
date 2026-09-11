@@ -50,6 +50,25 @@ flowchart LR
     M --> H[Health checks + security rules]
 ```
 
+### Token lifecycle
+
+```mermaid
+flowchart TD
+    A[Login Request] --> B[Validate User]
+    B --> C[Create Access Token]
+    B --> D[Create Refresh Token]
+    C --> E[Protected API Call]
+    D --> F[Store in Redis]
+    E --> G{Token valid?}
+    G -->|Yes| H[Allow Request]
+    G -->|No| I[Reject Request]
+    H --> J[Refresh When Needed]
+    J --> K[Rotate Refresh Token]
+    K --> L[Issue New Access Token]
+    F --> M[Logout / Revoke Session]
+    M --> N[Remove Refresh Token]
+```
+
 ---
 
 ## Quick overview
