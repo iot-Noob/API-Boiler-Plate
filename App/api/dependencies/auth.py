@@ -24,6 +24,7 @@ pwd_context = PasswordHasher(
     hash_len=settings.HASH_LENGTH,
     salt_len=settings.SALT_LENGTH
 )
+DUMMY_PASSWORD_HASH = pwd_context.hash("timing-safe-dummy-password")
 
 # Use OAuth2PasswordBearer for standard OAuth2 flows
 oauth2_scheme =HTTPBearer(auto_error=False)
@@ -38,7 +39,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     except argon2_exceptions.VerifyMismatchError:
         return False
     except Exception as e:
-        logger.error(f"Password verification error: {e}")
+        logger.exception(f"Password verification error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
             detail="Password verification failed"
@@ -78,42 +79,41 @@ def create_access_token(
         return encoded_jwt
         
     except Exception as e:
-        logger.error(f"Token creation error: {e}")
+        logger.exception(f"Token creation error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create access token"
         )
 
 def decode_jwt(token: str) -> Optional[Dict[str, Any]]:
-    """Decode and validate JWT token - FIXED"""
+    """Decode and validate JWT token."""
     try:
-      
-        
-        # Decode with verification
         payload = jwt.decode(
-            token, 
-            settings.secret_key_str, 
-            algorithms=[settings.ALGORITHM]
+            token,
+            settings.secret_key_str,
+            algorithms=[settings.ALGORITHM],
         )
-        
-        # Log token type for debugging
-        token_type = payload.get("type", "unknown")
-        print(f"Token decoded successfully. Type: {token_type}")
-        
         return payload
-        
     except jwt.ExpiredSignatureError:
-        print("Token has expired")
         logger.debug("Token expired")
-        return None
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     except jwt.JWTError as e:
-        print(f"JWT Error: {e}")
         logger.debug(f"JWT decode failed: {e}")
-        return None
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     except Exception as e:
-        print(f"Unexpected error: {type(e).__name__}: {e}")
-        logger.error(f"Unexpected token decode error: {e}")
-        return None
+        logger.exception(f"Unexpected token decode error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service error",
+        )
 
 def decode_jwt_ignore_expiry(token: str) -> Optional[Dict[str, Any]]:
     """Decode JWT verifying signature only — used for cross-checking claims (e.g. user_id) even if expired."""
@@ -172,8 +172,7 @@ async def get_current_user_slt(
     # ✅ Clean token (remove "Bearer " prefix if present)
     if token.startswith("Bearer "):
         token = token[7:]
-    print(f"Extracted token: {token[:30]}...")
-    
+
     # Decode token
     payload = decode_jwt(token)
     
@@ -269,7 +268,7 @@ async def get_current_user_slt(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting current user: {e}")
+        logger.exception(f"Error getting current user: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Authentication service error"
@@ -317,8 +316,7 @@ async def get_current_user(
     # ✅ Clean token (remove "Bearer " prefix if present)
     if token.startswith("Bearer "):
         token = token[7:]
-    print(f"Extracted token: {token[:30]}...")
-    
+
     # Decode token
     payload = decode_jwt(token)
     
@@ -414,7 +412,7 @@ async def get_current_user(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting current user: {e}")
+        logger.exception(f"Error getting current user: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Authentication service error"
@@ -446,44 +444,77 @@ async def get_admin_user(
 
 # ========== HELPER FUNCTIONS ==========
 
+from sqlalchemy.exc import SQLAlchemyError
+
 async def authenticate_user(
     uname: str,
     password: str,
     db: AsyncSession
 ) -> Optional[Dict[str, Any]]:
-    """Authenticate user by username and password - UPDATED"""
+    """
+    Authenticate by name OR email.
+
+    Infrastructure failures (SQLAlchemyError) propagate so get_db()
+    can convert them to 503. Only genuine "user not found / wrong
+    password / account inactive" outcomes return None.
+    """
+    repo = UserRepository(db)
+
+    # Lookup — let DB errors propagate to get_db().
+    # Be defensive against alternate repo implementations or test doubles
+    # that expose only one of the lookup methods.
+    email_lookup = getattr(repo, "get_by_email", None)
+    name_lookup = getattr(repo, "get_by_name", None)
+
+    if "@" in uname:
+        if email_lookup is not None:
+            user = await email_lookup(uname)
+        elif name_lookup is not None:
+            user = await name_lookup(uname)
+        else:
+            raise AttributeError("UserRepository does not implement get_by_email or get_by_name")
+    else:
+        if name_lookup is not None:
+            user = await name_lookup(uname)
+        elif email_lookup is not None:
+            user = await email_lookup(uname)
+        else:
+            raise AttributeError("UserRepository does not implement get_by_name or get_by_email")
+
+    # Timing-safe: run dummy hash even on missing user
+    if not user:
+        logger.debug(f"Authentication failed: user not found - {uname}")
+        try:
+            verify_password(password, DUMMY_PASSWORD_HASH)
+        except Exception:
+            logger.exception("Dummy password verify failed")
+        return None
+
+    # Password check — a real config error should surface, not be hidden
     try:
-        repo = UserRepository(db)
-        user = await repo.get_by_name(uname)
-        
-        # Check if user exists
-        if not user:
-            logger.debug(f"Authentication failed: user not found - {uname}")
-            return None
-        
-        # Verify password
         if not verify_password(password, user.password_hash):
             logger.debug(f"Authentication failed: wrong password - {uname}")
             return None
-        
-        # Check if active
-        if user.disabled or not user.is_active:
-            logger.debug(f"Authentication failed: account disabled - {uname}")
-            return None
-        
-        logger.info(f"User authenticated successfully: {uname}")
-        
-        return {
-            "id": user.id,
-            "email": user.email,
-            "name": user.name,
-            "role": user.user_role
-        }
-        
-    except Exception as e:
-        logger.error(f"Authentication error for {uname}: {e}")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(f"Password verification infrastructure error for {uname}")
+        raise HTTPException(500, "Authentication service error")
+
+    if user.disabled or not user.is_active:
+        logger.debug(f"Authentication failed: account disabled - {uname}")
+        return None
+    if user.is_deleted:
+        logger.debug(f"Authentication failed: account deleted - {uname}")
         return None
 
+    logger.info(f"User authenticated successfully: {uname}")
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "role": user.user_role,
+    }
  
 # ========== ADDITIONAL UTILITIES ==========
 
@@ -559,7 +590,7 @@ def create_refresh_token(data: Dict[str, Any],family_id:str) -> str:
 #         return new_access_token
         
 #     except Exception as e:
-#         logger.error(f"Token refresh error: {e}")
+#         logger.exception(f"Token refresh error: {e}")
 #         return None
 
 async def issue_refresh_token(
@@ -596,7 +627,6 @@ async def refresh_access_token(
     Validate + rotate refresh token.
     Returns {access_token, refresh_token} or None.
     """
-    # 1. Decode (raises HTTPException on invalid/expired)
     try:
         payload = decode_jwt(refresh_token)
     except HTTPException:
@@ -611,14 +641,14 @@ async def refresh_access_token(
     if not jti:
         return None
 
-    # 2. Reuse detection — if already revoked, kill the whole family
+    # Reuse detection — if already revoked, kill the whole family
     if await token_store.is_refresh_revoked(jti):
         logger.warning(f"Refresh reuse detected: jti={jti} family={family_id}")
         if family_id:
             await token_store.revoke_family(family_id)
         return None
 
-    # 3. Atomic consume — only one caller wins
+    # Atomic consume — only one caller wins
     meta = await token_store.consume_refresh(jti)
     if not meta:
         return None
@@ -689,6 +719,7 @@ async def create_short_live_token(
                 "role": user.user_role,
                 "types": "slts",
                 "purpose": purpose,
+                "jti": str(uuid.uuid4()),
             },
             expires_delta=timedelta(minutes=2),
         )
@@ -696,19 +727,19 @@ async def create_short_live_token(
         return short_token
 
     except Exception as e:
-        logger.error(f"Short-live token creation error: {e}")
+        logger.exception(f"Short-live token creation error: {e}")
         return None
 
 # Additional dependency for optional authentication
 async def get_current_user_optional(
-    token: Optional[str] = Depends(oauth2_scheme),
+    token: Optional[HTTPAuthorizationCredentials] = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db)
 ) -> Optional[Dict[str, Any]]:
     """Optional authentication - returns user if authenticated, None otherwise"""
     if not token:
         return None
-    
+
     try:
-        return await get_current_user(token, db)
+        return await get_current_user(credentials=token, db=db)
     except HTTPException:
         return None

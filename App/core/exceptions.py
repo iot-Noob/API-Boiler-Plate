@@ -1,0 +1,47 @@
+"""
+Domain exceptions for the repository layer.
+
+These are raised by repositories and translated to HTTP responses
+by the route layer. They are deliberately NOT HTTPException subclasses —
+the repository should not know about HTTP.
+"""
+
+
+class DomainError(Exception):
+    """Base class for all business-logic errors."""
+    default_message = "A domain error occurred"
+
+    def __init__(self, message: str | None = None):
+        super().__init__(message or self.default_message)
+
+
+class UserNotFoundError(DomainError):
+    default_message = "User not found"
+
+
+class DuplicateEmailError(DomainError):
+    default_message = "Email already registered"
+
+
+class DuplicateNameError(DomainError):
+    default_message = "Name already taken"
+
+
+class AccountAlreadyDisabledError(DomainError):
+    default_message = "Account is already disabled"
+
+
+class AccountNotDisabledError(DomainError):
+    default_message = "Account is not disabled"
+
+
+class AccountAlreadyDeletedError(DomainError):
+    default_message = "Account is already deleted"
+
+
+class AccountNotDeletedError(DomainError):
+    default_message = "Account is not deleted"
+
+
+class AdminCreationError(DomainError):
+    default_message = "Failed to create admin"

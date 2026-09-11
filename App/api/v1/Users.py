@@ -1,11 +1,25 @@
-from fastapi import APIRouter,Response 
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Body
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyCookie
+# App/api/v1/Users.py
+"""
+User self-service and admin endpoints.
+
+Routes:
+    POST /users_config/refresh   — rotate refresh token, issue new access token
+    GET  /users_config/me        — current user's profile
+    GET  /users_config/users     — list users (admin only)
+"""
+
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Body, Response
+from fastapi.security import HTTPAuthorizationCredentials
 from typing import Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import SQLAlchemyError
+
 from App.repository.UserRepository import UserRepository
 from App.core.LoggingInit import get_core_logger
-from App.schemas.AuthScheema import TokenResponse
+from App.core.settings import settings
+from App.core.Connector import get_db
+from App.core.exceptions import UserNotFoundError, DomainError
+from App.schemas.AuthScheema import TokenResponse, UserResponse
 from App.api.dependencies.auth import (
     refresh_access_token,
     get_current_active_user,
@@ -14,66 +28,16 @@ from App.api.dependencies.auth import (
     decode_jwt_ignore_expiry,
     cookie_scheme,
     oauth2_scheme,
-    decode_jwt
+    decode_jwt,
 )
-from App.core.settings import settings
-from App.schemas.AuthScheema import UserResponse
-from App.core.Connector import get_db
-user_router=APIRouter(prefix="/users_config",tags=["Users"])
+
+user_router = APIRouter(prefix="/users_config", tags=["Users"])
 logger = get_core_logger(__name__)
 
-# @user_router.post(
-#     "/refresh",
-#     response_model=TokenResponse,
-#     summary="Refresh access token",
-#     description="Get new access token using refresh token"
-# )
-# async def refresh_token(
-#     refresh_token_body: Optional[str] = Body(None, embed=True, alias="refresh_token"),
-#     refresh_token_cookie: Optional[str] = Depends(refresh_cookie_scheme),
-#     access_token_cookie: Optional[str] = Depends(cookie_scheme),
-#     access_credentials: Optional[HTTPAuthorizationCredentials] = Depends(oauth2_scheme),
-#     db: AsyncSession = Depends(get_db),
-# ):
-#     """Refresh access token"""
-#     try:
-#         token = refresh_token_body or refresh_token_cookie
-#         if not token:
-#             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "No refresh token provided")
 
-#         # Decode + validate the refresh token itself (type + expiry enforced here)
-#         rt_payload = decode_jwt(token)
-#         if rt_payload.get("type") != "refresh":
-#             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid refresh token")
-#         rt_user_id = rt_payload.get("user_id")
-
-#         # Cross-check against the current access token's identity, if one is present
-#         access_token = access_credentials.credentials if access_credentials else access_token_cookie
-#         if access_token:
-#             at_payload = decode_jwt_ignore_expiry(access_token)
-#             if at_payload:
-#                 at_user_id = at_payload.get("user_id")
-#                 if at_user_id is not None and at_user_id != rt_user_id:
-#                     logger.warning(
-#                         f"Refresh token user {rt_user_id} does not match access token user {at_user_id}"
-#                     )
-#                     raise HTTPException(
-#                         status.HTTP_401_UNAUTHORIZED,
-#                         "Refresh token does not match current session"
-#                     )
-
-#         new_access_token = await refresh_access_token(token, db)
-#         if not new_access_token:
-#             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid refresh token")
-
-#         return TokenResponse(access_token=new_access_token, expires_in=3600)
-
-#     except HTTPException:
-#         raise
-#     except Exception as e:
-#         logger.error(f"Token refresh error: {e}")
-#         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Token refresh failed")
-
+# ============================================================================
+# POST /users_config/refresh
+# ============================================================================
 @user_router.post(
     "/refresh",
     response_model=TokenResponse,
@@ -98,8 +62,8 @@ async def refresh_token(
                 detail="No refresh token provided",
             )
 
-        # 2. Decode + validate the refresh token
-        #    (decode_jwt raises HTTPException on invalid/expired)
+        # 2. Decode + validate the refresh token.
+        #    decode_jwt raises HTTPException on invalid/expired signature.
         rt_payload = decode_jwt(token)
         if not rt_payload:
             raise HTTPException(
@@ -107,6 +71,15 @@ async def refresh_token(
                 detail="Invalid refresh token",
             )
 
+        # 2a. Reject SLT tokens explicitly. They use `types: "slts"` and are
+        #     for account restoration, not session refresh.
+        if rt_payload.get("types") == "slts":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Short-lived tokens cannot be used for refresh",
+            )
+
+        # 2b. Reject anything that isn't a refresh token.
         if rt_payload.get("type") != "refresh":
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -120,7 +93,8 @@ async def refresh_token(
                 detail="Invalid refresh token payload",
             )
 
-        # 3. Cross-check identity against the current access token (if present)
+        # 3. Cross-check identity against the current access token (if present).
+        #    Prevents "user A refreshes user B's session" mismatch.
         access_token = (
             access_credentials.credentials
             if access_credentials
@@ -140,7 +114,7 @@ async def refresh_token(
                         detail="Refresh token does not match current session",
                     )
 
-        # 4. Rotate — returns {"access_token": ..., "refresh_token": ...} or None
+        # 4. Rotate — returns {"access_token": ..., "refresh_token": ...} or None.
         result = await refresh_access_token(token, db)
         if not result:
             raise HTTPException(
@@ -148,7 +122,7 @@ async def refresh_token(
                 detail="Invalid or expired refresh token",
             )
 
-        # 5. If the client used cookies, set new ones
+        # 5. If the client used cookies, set fresh ones.
         if refresh_token_cookie:
             res.set_cookie(
                 key="CSO",
@@ -165,11 +139,11 @@ async def refresh_token(
                 httponly=True,
                 secure=settings.COOKIE_SECURE,
                 samesite="strict",
-                max_age=7 * 24 * 3600,
-                path="/users_config/refresh",
+                max_age=settings.REFRESH_TOKEN_TTL_SECONDS,
+                path="/app/v1/users/users_config/refresh",
             )
 
-        # 6. Return new tokens
+        # 6. Return new tokens.
         return TokenResponse(
             access_token=result["access_token"],
             refresh_token=result["refresh_token"],
@@ -178,82 +152,117 @@ async def refresh_token(
 
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Token refresh error: {e}")
+    except SQLAlchemyError:
+        logger.exception("Refresh DB error")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service temporarily unavailable",
+        )
+    except DomainError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception:
+        logger.exception("Refresh unexpected error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Token refresh failed",
         )
 
+
+# ============================================================================
+# GET /users_config/me
+# ============================================================================
 @user_router.get(
     "/me",
     response_model=UserResponse,
     summary="Get current user profile",
-    description="Get detailed information about the currently authenticated user"
+    description="Get detailed information about the currently authenticated user",
 )
 async def get_my_profile(
     current_user: Dict[str, Any] = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """Get current user's profile"""
+    """Get current user's profile."""
     try:
         repo = UserRepository(db)
         user = await repo.get_by_id(current_user["id"])
-        
+
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
+                detail="User not found",
             )
-        
+
         return UserResponse.model_validate(user)
-        
+
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Profile fetch error: {e}")
+    except UserNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+    except SQLAlchemyError:
+        logger.exception("Profile fetch DB error")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service temporarily unavailable",
+        )
+    except Exception:
+        logger.exception("Profile fetch unexpected error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch profile"
+            detail="Failed to fetch profile",
         )
 
-# Helper endpoint for admin users
+
+# ============================================================================
+# GET /users_config/users  (admin only)
+# ============================================================================
 @user_router.get(
     "/users",
     summary="List users (Admin only)",
-    description="Get list of all users. Admin access required."
+    description="Get list of all users. Admin access required.",
 )
 async def list_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     search: Optional[str] = None,
     current_user: Dict[str, Any] = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """List users (admin only)"""
+    """List users (admin only)."""
     try:
         repo = UserRepository(db)
         users = await repo.search_users(
             skip=skip,
             limit=limit,
             active_only=False,
-            search=search
+            search=search,
         )
-        
+
         user_count = await repo.count_users(active_only=False)
-        
+
         return {
             "users": [UserResponse.model_validate(user) for user in users],
             "total": user_count,
             "skip": skip,
-            "limit": limit
+            "limit": limit,
         }
-        
-    except Exception as e:
-        logger.error(f"Users list error: {e}")
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError:
+        logger.exception("List users DB error")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service temporarily unavailable",
+        )
+    except Exception:
+        logger.exception("List users unexpected error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch users list"
+            detail="Failed to fetch users list",
         )
-
- 

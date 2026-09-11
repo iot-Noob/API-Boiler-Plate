@@ -24,12 +24,17 @@ class Settings(BaseSettings):
         default=True,
         description="Whether to enforce HTTPS-only connections"
     )
+    REFRESH_TOKEN_TTL_SECONDS: int = Field(
+        default=7 * 24 * 3600,
+        ge=300,
+        description="Refresh token lifetime in seconds",
+    )
     ADMIN_EMAIL:str=Field(...)
     ADMIN_USERNAME:str=Field(...)
     ADMIN_PASSWORD:str=Field(...)
     # Security
-    SECRET_KEY: Optional[SecretStr] = Field(
-        default=None,
+    SECRET_KEY:SecretStr= Field(
+        ...,
         min_length=32,
         description="Secret key for JWT token signing"
     )

@@ -42,8 +42,10 @@ async def consume_refresh(jti: str, revoke_ttl: int = 7 * 24 * 3600) -> Optional
 
 ### revoke a refresh token by marking it as revoked until its natural expiry. This is useful for logging out users or invalidating tokens without waiting for them to expire naturally. Janu k pic dkhi hilaya naha k dosto ko send kar iya or new neudes mungwai lol
 async def revoke_refresh(jti: str, ttl: int) -> None:
-    """Mark a refresh token as revoked until its natural expiry."""
-    await redis_client.client.set(revoked_rt_key(jti), "1", ex=ttl)
+    """Mark a refresh token as revoked and invalidate its stored payload immediately."""
+    c = redis_client.client
+    await c.delete(refresh_key(jti))
+    await c.set(revoked_rt_key(jti), "1", ex=ttl)
 
 
 async def is_refresh_revoked(jti: str) -> bool:

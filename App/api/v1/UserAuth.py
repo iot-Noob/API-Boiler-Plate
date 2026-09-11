@@ -1,15 +1,34 @@
-# App/api/v1/UserAuth.py - PROFESSIONAL REFACTORED VERSION
-from jose import jwt
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Body,Response
-from App.schemas.AuthScheema import TokenResponse
-from sqlalchemy.ext.asyncio import AsyncSession
-from App.core.LoggingInit import get_core_logger
-from App.core.Connector import get_db
-from App.models.UserAuthModel import User,UpdateUser,LoginUser
-from App.core import token_store
+# App/api/v1/UserAuth.py
+"""
+Authentication endpoints.
+
+Routes:
+    POST /basic_auth/login    — authenticate, issue access + refresh tokens
+    POST /basic_auth/signup   — register a new user
+    POST /basic_auth/logout   — revoke refresh token, clear cookies
+"""
+
 from datetime import datetime, timezone
 import uuid
-from App.schemas.AuthScheema import UserResponse
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Body, Response, Request
+from jose import jwt
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import SQLAlchemyError
+
+from App.schemas.AuthScheema import TokenResponse, UserResponse
+from App.models.UserAuthModel import User, UpdateUser, LoginUser
+from App.core.LoggingInit import get_core_logger
+from App.core.Connector import get_db
+from App.core import token_store
+from App.core.settings import settings
+from App.core.exceptions import (
+    DuplicateEmailError,
+    UserNotFoundError,
+    DomainError,
+)
+from App.repository.UserRepository import UserRepository
 from App.api.dependencies.auth import (
     authenticate_user,
     create_access_token,
@@ -18,113 +37,103 @@ from App.api.dependencies.auth import (
     oauth2_scheme,
     refresh_cookie_scheme,
     get_password_hash,
-
-    validate_password_strength
+    validate_password_strength,
+    decode_jwt_ignore_expiry,
 )
-from typing import Optional
-from App.repository.UserRepository import UserRepository
-from App.core.settings import settings
-# Initialize logger
+
 logger = get_core_logger(__name__)
 
-# Pydantic Models (Request/Response schemas)
- 
-
-
-
-
-# Create router
 router = APIRouter(prefix="/basic_auth", tags=["Authentication"])
 
+
+# ============================================================================
+# POST /basic_auth/login
+# ============================================================================
 @router.post(
     "/login",
     status_code=status.HTTP_200_OK,
     summary="User login",
-    description="Authenticate user with email and password"
+    description="Authenticate user with name/email and password.",
 )
 async def login(
+    request: Request,
     res: Response,
     form_data: LoginUser,
     db: AsyncSession = Depends(get_db),
     cookie_login: Optional[bool] = False,
 ):
-    """
-    Login endpoint supporting OAuth2 password flow.
-    Returns access and refresh tokens.
-    """
+    """Login endpoint supporting both JSON and cookie modes."""
+    req_id = getattr(request.state, "request_id", "-")
     try:
-        # Get password from SecretStr
+        # 1. Authenticate
         password = form_data.password.get_secret_value()
-        
-        # Authenticate user
         user = await authenticate_user(form_data.username, password, db)
-         
+
         if not user:
-            logger.warning(f"Failed login attempt for email: {form_data.username}")
+            logger.warning(f"[{req_id}] Failed login for {form_data.username}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid email or password or account is not there or disable!\n\nContact admin",
+                detail="Invalid email or password, or account is disabled",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        
-        # ✅ CREATE TOKENS FIRST - BEFORE ANY CONDITION!
+
+        # 2. Issue tokens
         family_id = str(uuid.uuid4())
         access_token = create_access_token(
             data={
-                "type":"token",
+                "type": "token",
                 "sub": user["email"],
                 "user_id": user["id"],
                 "name": user["name"],
-                "role": user["role"]
+                "role": user["role"],
             }
         )
-        
         refresh_token = create_refresh_token(
             data={
-                "type":"rf_token",
+                "type": "rf_token",
                 "sub": user["email"],
-                "user_id": user["id"]
+                "user_id": user["id"],
             },
             family_id=family_id,
         )
+
+        # 3. Extract jti and persist refresh token metadata in Redis
         jti = jwt.decode(
             refresh_token,
             settings.secret_key_str,
             algorithms=[settings.ALGORITHM],
         )["jti"]
+
         await token_store.store_refresh(
             jti=jti,
             user_id=user["id"],
             family_id=family_id,
-            ttl=7 * 24 * 3600,
+            ttl=settings.REFRESH_TOKEN_TTL_SECONDS,
         )
+
         expires_in_seconds = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
-        
-        logger.info(f"User logged in successfully: {user['email']}")
-        
-        # ========== COOKIE MODE ==========
+        logger.info(f"[{req_id}] User logged in: {user['email']}")
+
+        # 4. Cookie mode
         if cookie_login:
             res.set_cookie(
                 key="CSO",
                 value=access_token,
-                httponly=settings.HTTPS_ONLY,
+                httponly=True,
                 secure=settings.COOKIE_SECURE,
                 samesite="lax",
                 max_age=expires_in_seconds,
                 path="/",
-                domain=None,
             )
             res.set_cookie(
                 key="refresh_token",
                 value=refresh_token,
-                httponly=settings.HTTPS_ONLY,
+                httponly=True,
                 secure=settings.COOKIE_SECURE,
-                samesite="lax",
-                max_age=7 * 24 * 60 * 60,
-                path="/users_config/refresh",
-                domain=None,
+                samesite="strict",
+                max_age=settings.REFRESH_TOKEN_TTL_SECONDS,
+                path="/app/v1/users/users_config/refresh",
             )
-
             return {
                 "token": access_token,
                 "refresh_token": refresh_token,
@@ -134,78 +143,84 @@ async def login(
                     "id": user["id"],
                     "email": user["email"],
                     "name": user["name"],
-                    "role": user["role"]
-                }
+                    "role": user["role"],
+                },
             }
-        
-        # ========== JSON MODE ==========
-        else:
-            return TokenResponse(
-                access_token=access_token,
-                refresh_token=refresh_token,
-                expires_in=expires_in_seconds
-            )
-        
+
+        # 5. JSON mode
+        return TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_in=expires_in_seconds,
+        )
+
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Login error: {e}")
+    except SQLAlchemyError:
+        logger.exception(f"[{req_id}] Login DB error")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service temporarily unavailable",
+        )
+    except DomainError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception:
+        logger.exception(f"[{req_id}] Login unexpected error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error during login"
+            detail="Internal server error during login",
         )
-    
-# App/api/v1/UserAuth.py - FIXED VERSION
+
+
+# ============================================================================
+# POST /basic_auth/signup
+# ============================================================================
 @router.post(
     "/signup",
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Register new user",
-    description="Create a new user account"
+    description="Create a new user account.",
 )
 async def signup(
-    
+    request: Request,
     user_data: User,
     db: AsyncSession = Depends(get_db),
-   
 ):
-    """Register a new user"""
+    """Register a new user."""
+    req_id = getattr(request.state, "request_id", "-")
     try:
         repo = UserRepository(db)
-        
-        # Check if user exists
-        existing_user = await repo.get_by_email(user_data.email)
-        if existing_user:
+
+        # 1. Reject duplicate email early (nicer error than 409 from repo)
+        if await repo.exists_by_email(user_data.email):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered"
+                detail="Email already registered",
             )
-        
-        # Create user data dictionary
+
+        # 2. Validate and hash password
         user_dict = user_data.model_dump()
-        
-        # Validate and hash password
-        if "password" not in user_dict:
+        if "password" not in user_dict or not user_dict["password"]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Password is required"
+                detail="Password is required",
             )
-        
-        # Validate password strength
         if not validate_password_strength(user_dict["password"]):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Password must be at least 8 characters with uppercase, lowercase, digit, and special character"
+                detail=(
+                    "Password must be at least 8 characters with "
+                    "uppercase, lowercase, digit, and special character"
+                ),
             )
-        
         user_dict["password_hash"] = get_password_hash(user_dict["password"])
-        del user_dict["password"]  # Remove plain password
-        
-        # Set default values
+        del user_dict["password"]
+
+        # 3. Set defaults
         user_dict["user_role"] = "user"
         user_dict["is_active"] = True
         user_dict["permissions"] = {
-            # ===== USER SELF-MANAGEMENT =====
             "user.view.self": True,
             "user.update.self": True,
             "user.update.email": True,
@@ -217,53 +232,41 @@ async def signup(
             "user.self.enable": True,
             "user.disable.self": True,
         }
-        
+
+        # 4. Persist
         user = await repo.create(user_dict)
-        
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create user"
-            )
-        
-        logger.info(f"New user registered: {user.email}")
-        
-        # FIX: Convert SQLAlchemy model to dictionary before validation
-        user_dict_response = {
-            "id": user.id,
-            "name": user.name,
-            "email": user.email,
-            "profile_pic": user.profile_pic or None,  # Ensure None if empty
-            "permissions":{ 
-            "user.view.self": True,
-            "user.update.self": True,
-            "user.update.email": True,
-            "user.update.password": True,
-            "user.update.profile": True,
-            "user.delete.self": True,
-            "user.history.view": True,
-            "user.history.delete": True,
-            "user.self.enable": True,
-            "user.disable.self": True,
-            }
-        }
-        
-        # Validate with UserResponse model
-        return UserResponse(**user_dict_response)
-        
+        logger.info(f"[{req_id}] New user registered: {user.email}")
+
+        return UserResponse.model_validate(user)
+
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Signup error: {e}")
-        await db.rollback()
+    except DuplicateEmailError:
+        # Race condition: another request created the email between
+        # our exists_by_email check and the insert.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered",
+        )
+    except SQLAlchemyError:
+        logger.exception(f"[{req_id}] Signup DB error")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service temporarily unavailable",
+        )
+    except DomainError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception:
+        logger.exception(f"[{req_id}] Signup unexpected error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Registration failed: {str(e)}"
+            detail="Registration failed",
         )
 
-# App/api/v1/UserAuth.py — add below signup()
 
-
+# ============================================================================
+# POST /basic_auth/logout
+# ============================================================================
 @router.post(
     "/logout",
     status_code=status.HTTP_200_OK,
@@ -271,6 +274,7 @@ async def signup(
     description="Revoke refresh token in Redis and clear cookies. Idempotent.",
 )
 async def logout(
+    request: Request,
     res: Response,
     cookie_auth: Optional[str] = Depends(cookie_scheme),
     refresh_auth: Optional[str] = Depends(refresh_cookie_scheme),
@@ -278,60 +282,59 @@ async def logout(
     """
     Logout for cookie-based login.
 
-    1. Revokes the refresh token in Redis (so it dies server-side)
-    2. Clears the access + refresh cookies
+    1. Revokes the refresh token in Redis (server-side kill).
+    2. Clears the access + refresh cookies.
 
     Idempotent — safe to call repeatedly.
     """
-    # ---- NEW: revoke refresh token in Redis ----
+    req_id = getattr(request.state, "request_id", "-")
+
+    # ---- Revoke refresh token server-side ----
     if refresh_auth:
         try:
-            payload = jwt.decode(
-                refresh_auth,
-                settings.secret_key_str,
-                algorithms=[settings.ALGORITHM],
-            )
-            jti = payload.get("jti")
-            exp = payload.get("exp")
-            if jti and exp:
-                ttl = max(int(exp - datetime.now(timezone.utc).timestamp()), 1)
+            payload = decode_jwt_ignore_expiry(refresh_auth)
+            jti = payload.get("jti") if payload else None
+            exp = payload.get("exp") if payload else None
+            if jti:
+                ttl = (
+                    max(int(exp - datetime.now(timezone.utc).timestamp()), 1)
+                    if exp
+                    else settings.REFRESH_TOKEN_TTL_SECONDS
+                )
                 await token_store.revoke_refresh(jti, ttl)
-                logger.info(f"Revoked refresh token: {jti}")
+                logger.info(f"[{req_id}] Revoked refresh token: {jti}")
             else:
-                logger.debug("Logout: refresh token missing jti/exp")
+                logger.debug(f"[{req_id}] Logout: refresh token missing jti")
         except HTTPException:
-            logger.debug("Logout: refresh token already invalid/expired")
-        except Exception as e:
-            # Redis down or unexpected — log but still clear cookies
-            logger.error(f"Logout revocation error (non-fatal): {e}")
-    # ---- END NEW ----
+            logger.debug(f"[{req_id}] Logout: refresh token already invalid/expired")
+        except Exception:
+            # Redis down. For security, fail the logout — the client
+            # should retry. Silently succeeding would leave a live token
+            # on the server after the user thinks they logged out.
+            logger.exception(f"[{req_id}] Logout revocation failed")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Logout unavailable, please retry",
+            )
 
-    # Existing logic — unchanged
+    # ---- Nothing to do ----
     if not cookie_auth and not refresh_auth:
-        logger.info("Logout called with no active session cookies present")
+        logger.info(f"[{req_id}] Logout called with no active session cookies")
         return {
             "status": "success",
             "message": "Already logged out",
             "already_logged_out": True,
         }
 
+    # ---- Clear cookies ----
     if cookie_auth:
-        res.delete_cookie(
-            key="CSO",
-            path="/",
-            domain=None,
-        )
-
+        res.delete_cookie(key="CSO", path="/", domain=None)
     if refresh_auth:
         res.delete_cookie(
             key="refresh_token",
-            path="/users_config/refresh",
+            path="/app/v1/users/users_config/refresh",
             domain=None,
         )
 
-    logger.info("User logged out (cookies cleared)")
-
-    return {
-        "status": "success",
-        "message": "Logged out successfully",
-    }
+    logger.info(f"[{req_id}] User logged out (cookies cleared)")
+    return {"status": "success", "message": "Logged out successfully"}

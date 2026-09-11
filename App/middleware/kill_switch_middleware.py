@@ -13,7 +13,7 @@ Redis keys:
 """
 
 import time
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -73,7 +73,10 @@ class KillSwitchMiddleware(BaseHTTPMiddleware):
         # 3. Pass through
         try:
             return await call_next(request)
+        except HTTPException:
+            raise
         except Exception as e:
+            req_id = getattr(request.state, "request_id", "-")
             logger.exception(
                 f"Unhandled exception — entering safety mode for {self.recovery_seconds}s: {e}"
             )
@@ -95,5 +98,8 @@ class KillSwitchMiddleware(BaseHTTPMiddleware):
 
             return JSONResponse(
                 status_code=500,
-                content={"detail": "Internal error"},
+                content={
+                    "error": "Internal server error",
+                    "request_id": req_id,
+                },
             )
