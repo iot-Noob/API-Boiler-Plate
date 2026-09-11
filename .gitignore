@@ -34,7 +34,6 @@ __pycache__
 *.pyc
 *.pyo
 *.pyd
-*.txt
 logs
 *.crt
 *.key
