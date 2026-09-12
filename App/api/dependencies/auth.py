@@ -14,6 +14,7 @@ from App.core.LoggingInit import get_core_logger
 from fastapi.security import HTTPAuthorizationCredentials,APIKeyCookie 
 from App.core import token_store
 import uuid
+import redis.exceptions
 # Initialize logger
 logger = get_core_logger(__name__)
 
@@ -650,10 +651,6 @@ async def refresh_access_token(
     refresh_token: str,
     db: AsyncSession,
 ) -> Optional[Dict[str, str]]:
-    """
-    Validate + rotate refresh token.
-    Returns {access_token, refresh_token} or None.
-    """
     try:
         payload = decode_jwt(refresh_token)
     except HTTPException:
@@ -668,15 +665,22 @@ async def refresh_access_token(
     if not jti:
         return None
 
-    # Reuse detection — if already revoked, kill the whole family
-    if await token_store.is_refresh_revoked(jti):
-        logger.warning(f"Refresh reuse detected: jti={jti} family={family_id}")
-        if family_id:
-            await token_store.revoke_family(family_id)
-        return None
+    # ── Redis-dependent block: reuse check + atomic consume ──
+    try:
+        if await token_store.is_refresh_revoked(jti):
+            logger.warning(f"Refresh reuse detected: jti={jti} family={family_id}")
+            if family_id:
+                await token_store.revoke_family(family_id)
+            return None
 
-    # Atomic consume — only one caller wins
-    meta = await token_store.consume_refresh(jti)
+        meta = await token_store.consume_refresh(jti)
+    except redis.exceptions.RedisError as e:
+        logger.error(f"Redis unavailable during refresh ({type(e).__name__}): {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service temporarily unavailable",
+        )
+
     if not meta:
         return None
 
@@ -684,45 +688,37 @@ async def refresh_access_token(
     if not user_id:
         return None
 
-    # 4. Load user
     repo = UserRepository(db)
     user = await repo.get_by_id(user_id)
     if not user or user.disabled or not user.is_active or user.is_deleted:
         return None
 
-    # 5. Rotate — new access + new refresh, SAME family
     family = family_id or meta.get("family_id") or str(uuid.uuid4())
 
     new_access = create_access_token({
-        "sub": user.email,
-        "user_id": user.id,
-        "name": user.name,
-        "role": user.user_role,
+        "sub": user.email, "user_id": user.id,
+        "name": user.name, "role": user.user_role,
     })
-
     new_refresh = create_refresh_token(
-        data={"sub": user.email, "user_id": user.id},
-        family_id=family,
+        data={"sub": user.email, "user_id": user.id}, family_id=family,
     )
-
-    # 6. Store new refresh in Redis
     new_jti = jwt.decode(
-        new_refresh,
-        settings.secret_key_str,
-        algorithms=[settings.ALGORITHM],
+        new_refresh, settings.secret_key_str, algorithms=[settings.ALGORITHM],
     )["jti"]
 
-    await token_store.store_refresh(
-        jti=new_jti,
-        user_id=user.id,
-        family_id=family,
-        ttl=7 * 24 * 3600,
-    )
+    # ── Redis-dependent: storing new refresh token ──
+    try:
+        await token_store.store_refresh(
+            jti=new_jti, user_id=user.id, family_id=family, ttl=7 * 24 * 3600,
+        )
+    except redis.exceptions.RedisError as e:
+        logger.error(f"Redis unavailable while storing new refresh token ({type(e).__name__}): {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service temporarily unavailable",
+        )
 
-    return {
-        "access_token": new_access,
-        "refresh_token": new_refresh,
-    }
+    return {"access_token": new_access, "refresh_token": new_refresh}
 async def create_short_live_token(
     user_id: int,
     db: AsyncSession,
