@@ -14,21 +14,18 @@ from typing import Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
 
-from App.repository.UserRepository import UserRepository
 from App.core.LoggingInit import get_core_logger
 from App.core.settings import settings
 from App.core.Connector import get_db
 from App.core.exceptions import UserNotFoundError, DomainError
 from App.schemas.AuthScheema import TokenResponse, UserResponse
+from App.services.user_service import UserService
 from App.api.dependencies.auth import (
-    refresh_access_token,
     get_current_active_user,
     get_admin_user,
     refresh_cookie_scheme,
-    decode_jwt_ignore_expiry,
     cookie_scheme,
     oauth2_scheme,
-    decode_jwt,
 )
 
 user_router = APIRouter(prefix="/users_config", tags=["Users"])
@@ -54,7 +51,6 @@ async def refresh_token(
 ):
     """Refresh access token using refresh token (with rotation)."""
     try:
-        # 1. Get the refresh token from body or cookie
         token = refresh_token_body or refresh_token_cookie
         if not token:
             raise HTTPException(
@@ -62,67 +58,17 @@ async def refresh_token(
                 detail="No refresh token provided",
             )
 
-        # 2. Decode + validate the refresh token.
-        #    decode_jwt raises HTTPException on invalid/expired signature.
-        rt_payload = decode_jwt(token)
-        if not rt_payload:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid refresh token",
-            )
-
-        # 2a. Reject SLT tokens explicitly. They use `types: "slts"` and are
-        #     for account restoration, not session refresh.
-        if rt_payload.get("types") == "slts":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Short-lived tokens cannot be used for refresh",
-            )
-
-        # 2b. Reject anything that isn't a refresh token.
-        if rt_payload.get("type") != "refresh":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid refresh token",
-            )
-
-        rt_user_id = rt_payload.get("user_id")
-        if not rt_user_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid refresh token payload",
-            )
-
-        # 3. Cross-check identity against the current access token (if present).
-        #    Prevents "user A refreshes user B's session" mismatch.
         access_token = (
             access_credentials.credentials
             if access_credentials
             else access_token_cookie
         )
-        if access_token:
-            at_payload = decode_jwt_ignore_expiry(access_token)
-            if at_payload:
-                at_user_id = at_payload.get("user_id")
-                if at_user_id is not None and at_user_id != rt_user_id:
-                    logger.warning(
-                        f"Refresh token user {rt_user_id} does not match "
-                        f"access token user {at_user_id}"
-                    )
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Refresh token does not match current session",
-                    )
 
-        # 4. Rotate — returns {"access_token": ..., "refresh_token": ...} or None.
-        result = await refresh_access_token(token, db)
-        if not result:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired refresh token",
-            )
+        result = await UserService(db).refresh_session(
+            refresh_token_value=token,
+            access_token_value=access_token,
+        )
 
-        # 5. If the client used cookies, set fresh ones.
         if refresh_token_cookie:
             res.set_cookie(
                 key="CSO",
@@ -143,7 +89,6 @@ async def refresh_token(
                 path="/app/v1/users/users_config/refresh",
             )
 
-        # 6. Return new tokens.
         return TokenResponse(
             access_token=result["access_token"],
             refresh_token=result["refresh_token"],
@@ -160,7 +105,7 @@ async def refresh_token(
         )
     except DomainError as e:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_401_UNAUTHORIZED,
             detail=str(e),
         )
     except Exception:
@@ -186,15 +131,7 @@ async def get_my_profile(
 ):
     """Get current user's profile."""
     try:
-        repo = UserRepository(db)
-        user = await repo.get_by_id(current_user["id"])
-
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found",
-            )
-
+        user = await UserService(db).get_profile(current_user["id"])
         return UserResponse.model_validate(user)
 
     except HTTPException:
@@ -235,21 +172,13 @@ async def list_users(
 ):
     """List users (admin only)."""
     try:
-        repo = UserRepository(db)
-        users = await repo.search_users(
-            skip=skip,
-            limit=limit,
-            active_only=False,
-            search=search,
-        )
-
-        user_count = await repo.count_users(active_only=False)
+        data = await UserService(db).list_users(skip=skip, limit=limit, search=search)
 
         return {
-            "users": [UserResponse.model_validate(user) for user in users],
-            "total": user_count,
-            "skip": skip,
-            "limit": limit,
+            "users": [UserResponse.model_validate(user) for user in data["users"]],
+            "total": data["total"],
+            "skip": data["skip"],
+            "limit": data["limit"],
         }
 
     except HTTPException:

@@ -51,8 +51,12 @@ async def lifespan(app: FastAPI):
         # or the migration already seeded it. Log and continue.
         logger.exception("Admin seed skipped (likely already done)")
 
-    await redis_client.connect()
-    logger.info("App started")
+    try:
+        await redis_client.connect()
+        logger.info("App started")
+    except Exception:
+        logger.exception("Redis unavailable during startup; continuing in degraded mode")
+        logger.warning("App started in degraded mode without Redis")
     yield
 
     # Graceful shutdown: close DB pool then Redis

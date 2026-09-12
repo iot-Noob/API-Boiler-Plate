@@ -134,13 +134,13 @@ class Database:
 
     @property
     def engine(self) -> AsyncEngine:
-        if not self._engine:
+        if not self._engine or not self._is_connected:
             raise RuntimeError("Database not connected. Call connect() first.")
         return self._engine
 
     @property
     def session_factory(self) -> async_sessionmaker:
-        if not self._session_factory:
+        if not self._session_factory or not self._is_connected:
             raise RuntimeError("Database not connected. Call connect() first.")
         return self._session_factory
 

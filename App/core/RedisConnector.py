@@ -1,5 +1,6 @@
 # App/core/RedisConnector.py
 import redis.asyncio as redis
+from redis.exceptions import RedisError
 from App.core.settings import settings
 from App.core.LoggingInit import get_core_logger
 
@@ -23,10 +24,16 @@ class RedisClient:
             await self._client.ping()
             self._is_connected = True
             logger.info("Redis connected")
-        except Exception as e:
+        except (RedisError, OSError, ConnectionError, TimeoutError) as e:
+            self._client = None
             self._is_connected = False
             logger.error(f"Redis connection failed: {e}")
-            raise
+            raise RuntimeError("Redis unavailable") from e
+        except Exception as e:
+            self._client = None
+            self._is_connected = False
+            logger.error(f"Redis connection failed: {e}")
+            raise RuntimeError("Redis unavailable") from e
 
     async def disconnect(self) -> None:
         if self._client:
@@ -47,6 +54,12 @@ class RedisClient:
     def client(self) -> redis.Redis:
         if not self._client or not self._is_connected:
             raise RuntimeError("Redis not connected. Call connect() first.")
+        return self._client
+
+    async def ensure_connected(self) -> redis.Redis:
+        """Attempt to reconnect if Redis was previously disconnected."""
+        if not self._client or not self._is_connected:
+            await self.connect()
         return self._client
 
 

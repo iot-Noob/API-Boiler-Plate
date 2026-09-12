@@ -39,5 +39,5 @@ class Permission(str, Enum):
     ADMIN_USERS_PROMOTE = "admin.users.promote"
     ADMIN_USERS = "admin.users"
     ADMIN_SETTINGS_VIEW = "admin.settings.view"
-    ADMIN_SETTINGS_UPDATE = "andmi.settings.update"
+    ADMIN_SETTINGS_UPDATE = "admin.settings.update"
     ADMIN_VIEW_ALL = "admin.view_all"

@@ -497,6 +497,9 @@ async def authenticate_user(
             return None
     except HTTPException:
         raise
+    except RuntimeError as e:
+        logger.exception(f"Password verification infrastructure error for {uname}: {e}")
+        raise HTTPException(503, "Authentication service is temporarily unavailable. Please try again later.")
     except Exception:
         logger.exception(f"Password verification infrastructure error for {uname}")
         raise HTTPException(500, "Authentication service error")
