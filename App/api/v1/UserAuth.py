@@ -227,6 +227,27 @@ async def logout(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Logout unavailable, please retry",
             )
+    elif access_value:
+        # Bearer client sent only the access token — no refresh token in
+        # body or cookie. We still need to make sure their stored refresh
+        # token can't mint new sessions. Log out everywhere for this user.
+        payload = decode_jwt_ignore_expiry(access_value)
+        user_id = payload.get("user_id") if payload else None
+        if user_id:
+            try:
+                n = await AuthService(db=None).revoke_all_sessions_for_user(user_id)
+                if n > 0:
+                    revoked_any = True
+                logger.info(
+                    f"[{req_id}] Logout-everywhere for user {user_id} "
+                    f"— revoked {n} refresh families"
+                )
+            except Exception:
+                logger.exception(f"[{req_id}] Logout-everywhere failed")
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Logout unavailable, please retry",
+                )
 
     # -------- 4. Revoke access token jti (immediate kill) --------
     if access_value:

@@ -70,6 +70,8 @@ class AuthService:
                 family_id=family_id,
                 ttl=settings.REFRESH_TOKEN_TTL_SECONDS,
             )
+        except RedisError as exc:
+            raise RuntimeError("Redis unavailable during login") from exc
         except RuntimeError as exc:
             raise RuntimeError("Redis unavailable during login") from exc
         except Exception as exc:

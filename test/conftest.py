@@ -1,151 +1,85 @@
+"""
+Pytest fixtures.
+
+Important: the app uses a module-level singleton database engine
+(`App.core.Connector.database`) whose connection pool is bound to the
+event loop it was first used under. pytest-asyncio by default gives
+each test a fresh loop, which makes connection reuse across tests fail
+with "Event loop is closed".
+
+The fix: one session-scoped event loop for the whole test run, and
+explicitly dispose the engine between tests so no connection is ever
+carried across.
+"""
+import asyncio
+
 import pytest
-from httpx import AsyncClient
+import pytest_asyncio
+from httpx import AsyncClient, ASGITransport
+from sqlalchemy import text
 
-pytestmark = pytest.mark.asyncio
-
-
-async def test_login_success(client: AsyncClient, login_payload):
-    r = await client.post(
-        "/app/v1/auth/basic_auth/login?cookie_login=false",
-        json=login_payload,
-    )
-    assert r.status_code == 200
-    body = r.json()
-    assert "access_token" in body
-    assert "refresh_token" in body
+from main import app
+from App.core.Connector import database
+from App.core.RedisConnector import redis_client
 
 
-async def test_login_wrong_password(client: AsyncClient):
-    r = await client.post(
-        "/app/v1/auth/basic_auth/login?cookie_login=false",
-        json={"username": "talha", "password": "wrong-password"},
-    )
-    assert r.status_code == 401
+# ---------------------------------------------------------------------------
+# One event loop for the entire test session.
+# ---------------------------------------------------------------------------
+@pytest.fixture(scope="session")
+def event_loop():
+    """
+    Override pytest-asyncio's default per-test loop.
+
+    This fixture is picked up automatically by pytest-asyncio for every
+    async test in the session, so all async work — including any
+    background connection the app opened — happens under one loop.
+    """
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
 
 
-async def test_logout_revokes_access_token(client: AsyncClient, login_payload):
-    r = await client.post(
-        "/app/v1/auth/basic_auth/login?cookie_login=false", json=login_payload
-    )
-    access = r.json()["access_token"]
+# ---------------------------------------------------------------------------
+# Connect/disconnect the app's DB + Redis once per test, not per request.
+# ---------------------------------------------------------------------------
+@pytest_asyncio.fixture(scope="function", autouse=True)
+async def reset_app_connections():
+    """
+    Before each test: ensure DB + Redis are connected under the current loop.
+    After each test: dispose the engine so no connection leaks into the next loop.
+    """
+    # Connect on demand if not already connected.
+    if not database.is_connected:
+        await database.connect()
+    try:
+        c = await redis_client.ensure_connected()
+        await c.ping()
+    except Exception:
+        pass  # tests that don't need Redis can still run
 
-    # Works before logout
-    r = await client.get(
-        "/app/v1/users/users_config/me",
-        headers={"Authorization": f"Bearer {access}"},
-    )
-    assert r.status_code == 200
+    yield
 
-    # Logout
-    await client.post(
-        "/app/v1/auth/basic_auth/logout",
-        headers={"Authorization": f"Bearer {access}"},
-    )
-
-    # Must now be rejected
-    r = await client.get(
-        "/app/v1/users/users_config/me",
-        headers={"Authorization": f"Bearer {access}"},
-    )
-    assert r.status_code == 401
-
-
-async def test_logout_revokes_refresh_token(client: AsyncClient, login_payload):
-    r = await client.post(
-        "/app/v1/auth/basic_auth/login?cookie_login=false", json=login_payload
-    )
-    access = r.json()["access_token"]
-    refresh = r.json()["refresh_token"]
-
-    await client.post(
-        "/app/v1/auth/basic_auth/logout",
-        headers={"Authorization": f"Bearer {access}"},
-        json={"refresh_token": refresh},
-    )
-
-    r = await client.post(
-        "/app/v1/users/users_config/refresh",
-        json={"refresh_token": refresh},
-    )
-    assert r.status_code == 401
+    # Dispose the DB pool so the next test starts clean.
+    try:
+        await database.disconnect()
+    except Exception:
+        pass
 
 
-async def test_refresh_rotation_works(client: AsyncClient, login_payload):
-    r = await client.post(
-        "/app/v1/auth/basic_auth/login?cookie_login=false", json=login_payload
-    )
-    refresh = r.json()["refresh_token"]
-
-    r = await client.post(
-        "/app/v1/users/users_config/refresh",
-        json={"refresh_token": refresh},
-    )
-    assert r.status_code == 200
-    body = r.json()
-    assert "access_token" in body
-    assert "refresh_token" in body
-    assert body["refresh_token"] != refresh   # rotated
+# ---------------------------------------------------------------------------
+# HTTP client pointed at the FastAPI app (no real network).
+# ---------------------------------------------------------------------------
+@pytest_asyncio.fixture
+async def client():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
 
 
-async def test_refresh_reuse_kills_family(client: AsyncClient, login_payload):
-    r = await client.post(
-        "/app/v1/auth/basic_auth/login?cookie_login=false", json=login_payload
-    )
-    refresh_1 = r.json()["refresh_token"]
-
-    # Use it once → get refresh_2
-    r = await client.post(
-        "/app/v1/users/users_config/refresh",
-        json={"refresh_token": refresh_1},
-    )
-    assert r.status_code == 200
-    refresh_2 = r.json()["refresh_token"]
-
-    # Reuse old one → must fail
-    r = await client.post(
-        "/app/v1/users/users_config/refresh",
-        json={"refresh_token": refresh_1},
-    )
-    assert r.status_code == 401
-
-    # The new one must ALSO be dead (family killed)
-    r = await client.post(
-        "/app/v1/users/users_config/refresh",
-        json={"refresh_token": refresh_2},
-    )
-    assert r.status_code == 401
-
-
-async def test_admin_endpoint_denied_for_user(client: AsyncClient, login_payload):
-    # talha is a regular user, not admin
-    r = await client.post(
-        "/app/v1/auth/basic_auth/login?cookie_login=false", json=login_payload
-    )
-    access = r.json()["access_token"]
-
-    r = await client.get(
-        "/app/v1/users/users_config/users",
-        headers={"Authorization": f"Bearer {access}"},
-    )
-    assert r.status_code == 403
-
-
-async def test_admin_endpoint_granted_for_admin(client: AsyncClient):
-    # Use admin credentials from .env
-    import os
-    admin_user = os.getenv("ADMIN_USERNAME", "admin")
-    admin_pass = os.getenv("ADMIN_PASSWORD", "ChangeMe@12345")
-
-    r = await client.post(
-        "/app/v1/auth/basic_auth/login?cookie_login=false",
-        json={"username": admin_user, "password": admin_pass},
-    )
-    if r.status_code != 200:
-        pytest.skip("Admin credentials not available in this environment")
-    access = r.json()["access_token"]
-
-    r = await client.get(
-        "/app/v1/users/users_config/users",
-        headers={"Authorization": f"Bearer {access}"},
-    )
-    assert r.status_code == 200
+# ---------------------------------------------------------------------------
+# Shared login payload for tests.
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def login_payload():
+    return {"username": "talha", "password": "Talha@6295"}
