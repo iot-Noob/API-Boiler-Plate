@@ -66,9 +66,9 @@ def create_access_token(
         to_encode.update({
             "exp": expire,
             "iat": datetime.now(timezone.utc),
-            "type": "access"
+            "type": "access",
+            "jti": str(uuid.uuid4()),      # ← NEW: needed for access blocklist
         })
-        
         encoded_jwt = jwt.encode(
             to_encode, 
             settings.secret_key_str, 
@@ -126,7 +126,7 @@ def decode_jwt_ignore_expiry(token: str) -> Optional[Dict[str, Any]]:
         )
         return payload
     except jwt.JWTError as e:
-        logger.debug(f"JWT decode (ignore expiry) failed: {e}")
+        logger.warning(f"JWT decode (ignore-expiry) failed: {e}")
         return None
 
 # ========== DEPENDENCY INJECTIONS ========== 
@@ -183,6 +183,16 @@ async def get_current_user_slt(
             detail="Invalid or malformed token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    jti = payload.get("jti")
+    if jti and await token_store.is_access_blocked(jti):
+        logger.warning(f"Blocklisted SLT token used: jti={jti}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    
     is_slt_token = payload.get("types") == "slts"
     # Check token type - REJECT REFRESH TOKENS!
     token_type = payload.get("type")
@@ -327,8 +337,16 @@ async def get_current_user(
             detail="Invalid or malformed token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    jti = payload.get("jti")                                    # ← ADD
+    if jti and await token_store.is_access_blocked(jti):        # ← ADD
+        logger.warning(f"Blocklisted access token used: jti={jti}")  # ← ADD
+        raise HTTPException(                                    # ← ADD
+            status_code=status.HTTP_401_UNAUTHORIZED,           # ← ADD
+            detail="Token has been revoked",                    # ← ADD
+            headers={"WWW-Authenticate": "Bearer"},             # ← ADD
+        )   
     is_slt_token = payload.get("types") == "slts"
-    # Check token type - REJECT REFRESH TOKENS!
+    # Check token type - REJECT REFRESH TOKENS
     token_type = payload.get("type")
     if token_type == "refresh":
         logger.warning("Refresh token used for authentication")
@@ -612,9 +630,15 @@ async def issue_refresh_token(
         settings.secret_key_str,
         algorithms=[settings.ALGORITHM],
     )
+    jti = payload["jti"]
 
     await token_store.store_refresh(
-        jti=payload["jti"],
+        jti=jti,
+        user_id=user_id,
+        family_id=family_id,
+        ttl=7 * 24 * 3600,
+    )
+    await token_store.track_family_for_user(
         user_id=user_id,
         family_id=family_id,
         ttl=7 * 24 * 3600,

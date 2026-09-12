@@ -1,3 +1,4 @@
+# App/services/auth_service.py
 from datetime import datetime, timezone
 import uuid
 from typing import Any, Dict, Optional
@@ -63,6 +64,12 @@ class AuthService:
                 family_id=family_id,
                 ttl=settings.REFRESH_TOKEN_TTL_SECONDS,
             )
+            # NEW: track family under user for logout-everywhere
+            await token_store.track_family_for_user(
+                user_id=user["id"],
+                family_id=family_id,
+                ttl=settings.REFRESH_TOKEN_TTL_SECONDS,
+            )
         except RuntimeError as exc:
             raise RuntimeError("Redis unavailable during login") from exc
         except Exception as exc:
@@ -111,13 +118,19 @@ class AuthService:
         return await repo.create(user_dict)
 
     async def revoke_session(self, refresh_token_value: Optional[str]) -> bool:
-        """Revoke a refresh token from Redis, keeping logout logic out of the route."""
+        """
+        Revoke the active session.
+        Also revokes the entire rotation FAMILY so rotated descendants are dead too.
+        """
         if not refresh_token_value:
             return False
 
         payload = decode_jwt_ignore_expiry(refresh_token_value)
         jti = payload.get("jti") if payload else None
         exp = payload.get("exp") if payload else None
+        family = payload.get("family") if payload else None
+        user_id = payload.get("user_id") if payload else None
+
         if not jti:
             return False
 
@@ -128,6 +141,36 @@ class AuthService:
         )
         try:
             await token_store.revoke_refresh(jti, ttl)
+            if family:
+                await token_store.revoke_family(family)
+                # Remove from user's tracking set — this family is now dead
+                if user_id:
+                    await token_store.forget_family_for_user(user_id, family)
             return True
         except RedisError as exc:
             raise RuntimeError("Redis unavailable during logout") from exc
+
+    # ========================================================================
+    # NEW: revoke ALL sessions for a user (logout-everywhere)
+    # ========================================================================
+    async def revoke_all_sessions_for_user(self, user_id: int) -> int:
+        """
+        Kill every refresh family currently tracked for this user.
+
+        Used when logout is called without a specific refresh token — e.g. a
+        Bearer client sends only its access token. Without this, the client's
+        refresh token would survive logout and could mint new sessions.
+
+        Returns the number of families revoked.
+        """
+        try:
+            families = await token_store.get_user_families(user_id)
+            for fam in families:
+                await token_store.revoke_family(fam)
+            # Clear the tracking set itself
+            await token_store.clear_user_families(user_id)
+
+          
+            return len(families)
+        except RedisError as exc:
+            raise RuntimeError("Redis unavailable during logout-everywhere") from exc

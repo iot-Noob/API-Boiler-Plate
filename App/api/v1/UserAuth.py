@@ -33,8 +33,9 @@ from App.api.dependencies.auth import (
     cookie_scheme,
     oauth2_scheme,
     refresh_cookie_scheme,
+    decode_jwt_ignore_expiry
 )
-
+from fastapi.security import HTTPAuthorizationCredentials
 logger = get_core_logger(__name__)
 
 router = APIRouter(prefix="/basic_auth", tags=["Authentication"])
@@ -188,52 +189,61 @@ async def signup(
 # ============================================================================
 # POST /basic_auth/logout
 # ============================================================================
+ 
+
 @router.post(
     "/logout",
     status_code=status.HTTP_200_OK,
     summary="Logout",
-    description="Revoke refresh token in Redis and clear cookies. Idempotent.",
+    description="Revoke refresh + access tokens and clear cookies. Idempotent.",
 )
 async def logout(
     request: Request,
     res: Response,
+    refresh_token_body: Optional[str] = Body(None, embed=True, alias="refresh_token"),
     cookie_auth: Optional[str] = Depends(cookie_scheme),
     refresh_auth: Optional[str] = Depends(refresh_cookie_scheme),
+    bearer: Optional[HTTPAuthorizationCredentials] = Depends(oauth2_scheme),
 ):
-    """
-    Logout for cookie-based login.
-
-    1. Revokes the refresh token in Redis (server-side kill).
-    2. Clears the access + refresh cookies.
-
-    Idempotent — safe to call repeatedly.
-    """
     req_id = getattr(request.state, "request_id", "-")
 
-    if refresh_auth:
+    # -------- 1. Pick the refresh token from body → cookie --------
+    refresh_value = refresh_token_body or refresh_auth
+
+    # -------- 2. Pick the access token from header → cookie --------
+    access_value = bearer.credentials if bearer else cookie_auth
+
+    revoked_any = False
+
+    # -------- 3. Revoke refresh (kills rotation family too) --------
+    if refresh_value:
         try:
-            revoked = await AuthService(db=None).revoke_session(refresh_auth)
-            if revoked:
+            if await AuthService(db=None).revoke_session(refresh_value):
+                revoked_any = True
                 logger.info(f"[{req_id}] Revoked refresh token during logout")
-            else:
-                logger.debug(f"[{req_id}] Logout: refresh token missing jti")
         except Exception:
-            logger.exception(f"[{req_id}] Logout revocation failed")
+            logger.exception(f"[{req_id}] Logout refresh revocation failed")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Logout unavailable, please retry",
             )
 
-    # ---- Nothing to do ----
-    if not cookie_auth and not refresh_auth:
-        logger.info(f"[{req_id}] Logout called with no active session cookies")
-        return {
-            "status": "success",
-            "message": "Already logged out",
-            "already_logged_out": True,
-        }
+    # -------- 4. Revoke access token jti (immediate kill) --------
+    if access_value:
+        payload = decode_jwt_ignore_expiry(access_value)
+        if payload:
+            jti = payload.get("jti")
+            exp = payload.get("exp")
+            if jti:
+                ttl = max(int(exp - datetime.now(timezone.utc).timestamp()), 1) if exp else 3600
+                try:
+                    await token_store.blocklist_access(jti, ttl)
+                    revoked_any = True
+                    logger.info(f"[{req_id}] Blocklisted access token during logout")
+                except Exception:
+                    logger.exception(f"[{req_id}] Access blocklist failed (non-fatal)")
 
-    # ---- Clear cookies ----
+    # -------- 5. Clear cookies regardless --------
     if cookie_auth:
         res.delete_cookie(key="CSO", path="/", domain=None)
     if refresh_auth:
@@ -243,5 +253,9 @@ async def logout(
             domain=None,
         )
 
-    logger.info(f"[{req_id}] User logged out (cookies cleared)")
+    if not revoked_any:
+        logger.info(f"[{req_id}] Logout called with no active tokens")
+        return {"status": "success", "message": "Already logged out", "already_logged_out": True}
+
+    logger.info(f"[{req_id}] User logged out")
     return {"status": "success", "message": "Logged out successfully"}
