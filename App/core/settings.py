@@ -24,11 +24,7 @@ class Settings(BaseSettings):
         default=True,
         description="Whether to enforce HTTPS-only connections"
     )
-    REFRESH_TOKEN_TTL_SECONDS: int = Field(
-        default=7 * 24 * 3600,
-        ge=300,
-        description="Refresh token lifetime in seconds",
-    )
+ 
     ADMIN_EMAIL:str=Field(...)
     ADMIN_USERNAME:str=Field(...)
     ADMIN_PASSWORD:str=Field(...)
@@ -45,10 +41,15 @@ class Settings(BaseSettings):
     )
     
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(
-        default=790,
+        default=15,                          # ← also change this to 15
         ge=1,
         le=10080,
-        description="Access token expiration time in minutes"
+        description="Access token expiration time in minutes",
+    )
+    REFRESH_TOKEN_TTL_SECONDS: int = Field(
+        default=7 * 24 * 3600,               # ← ADD THIS BACK
+        ge=300,
+        description="Refresh token lifetime in seconds",
     )
     MAX_BODY_SIZE: int = Field(
         default=1024 * 1024,
@@ -123,7 +124,6 @@ class Settings(BaseSettings):
         ge=60,
         description="Connection recycle time in seconds"
     )
-    
     DATABASE_POOL_TIMEOUT: int = Field(
         default=30,
         ge=1,

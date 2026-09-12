@@ -161,7 +161,7 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
 
         # 4. Redis check
         try:
-            c = redis_client.client
+            c = await redis_client.ensure_connected()
             count = await c.incr(key)
             if count == 1:
                 # First request in this bucket — set TTL

@@ -28,19 +28,14 @@ from App.core.exceptions import (
     UserNotFoundError,
     DomainError,
 )
-from App.repository.UserRepository import UserRepository
+from App.services.auth_service import AuthService
 from App.api.dependencies.auth import (
-    authenticate_user,
-    create_access_token,
-    create_refresh_token,
     cookie_scheme,
     oauth2_scheme,
     refresh_cookie_scheme,
-    get_password_hash,
-    validate_password_strength,
-    decode_jwt_ignore_expiry,
+    decode_jwt_ignore_expiry
 )
-
+from fastapi.security import HTTPAuthorizationCredentials
 logger = get_core_logger(__name__)
 
 router = APIRouter(prefix="/basic_auth", tags=["Authentication"])
@@ -65,11 +60,10 @@ async def login(
     """Login endpoint supporting both JSON and cookie modes."""
     req_id = getattr(request.state, "request_id", "-")
     try:
-        # 1. Authenticate
         password = form_data.password.get_secret_value()
-        user = await authenticate_user(form_data.username, password, db)
+        result = await AuthService(db).login_user(form_data.username, password)
 
-        if not user:
+        if not result:
             logger.warning(f"[{req_id}] Failed login for {form_data.username}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -77,44 +71,12 @@ async def login(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        # 2. Issue tokens
-        family_id = str(uuid.uuid4())
-        access_token = create_access_token(
-            data={
-                "type": "token",
-                "sub": user["email"],
-                "user_id": user["id"],
-                "name": user["name"],
-                "role": user["role"],
-            }
-        )
-        refresh_token = create_refresh_token(
-            data={
-                "type": "rf_token",
-                "sub": user["email"],
-                "user_id": user["id"],
-            },
-            family_id=family_id,
-        )
-
-        # 3. Extract jti and persist refresh token metadata in Redis
-        jti = jwt.decode(
-            refresh_token,
-            settings.secret_key_str,
-            algorithms=[settings.ALGORITHM],
-        )["jti"]
-
-        await token_store.store_refresh(
-            jti=jti,
-            user_id=user["id"],
-            family_id=family_id,
-            ttl=settings.REFRESH_TOKEN_TTL_SECONDS,
-        )
-
-        expires_in_seconds = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+        user = result["user"]
+        access_token = result["access_token"]
+        refresh_token = result["refresh_token"]
+        expires_in_seconds = result["expires_in"]
         logger.info(f"[{req_id}] User logged in: {user['email']}")
 
-        # 4. Cookie mode
         if cookie_login:
             res.set_cookie(
                 key="CSO",
@@ -147,7 +109,6 @@ async def login(
                 },
             }
 
-        # 5. JSON mode
         return TokenResponse(
             access_token=access_token,
             refresh_token=refresh_token,
@@ -156,6 +117,12 @@ async def login(
 
     except HTTPException:
         raise
+    except RuntimeError as e:
+        logger.exception(f"[{req_id}] Login infrastructure error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service is temporarily unavailable. Please try again later.",
+        )
     except SQLAlchemyError:
         logger.exception(f"[{req_id}] Login DB error")
         raise HTTPException(
@@ -190,53 +157,8 @@ async def signup(
     """Register a new user."""
     req_id = getattr(request.state, "request_id", "-")
     try:
-        repo = UserRepository(db)
-
-        # 1. Reject duplicate email early (nicer error than 409 from repo)
-        if await repo.exists_by_email(user_data.email):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered",
-            )
-
-        # 2. Validate and hash password
-        user_dict = user_data.model_dump()
-        if "password" not in user_dict or not user_dict["password"]:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Password is required",
-            )
-        if not validate_password_strength(user_dict["password"]):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "Password must be at least 8 characters with "
-                    "uppercase, lowercase, digit, and special character"
-                ),
-            )
-        user_dict["password_hash"] = get_password_hash(user_dict["password"])
-        del user_dict["password"]
-
-        # 3. Set defaults
-        user_dict["user_role"] = "user"
-        user_dict["is_active"] = True
-        user_dict["permissions"] = {
-            "user.view.self": True,
-            "user.update.self": True,
-            "user.update.email": True,
-            "user.update.password": True,
-            "user.update.profile": True,
-            "user.delete.self": True,
-            "user.history.view": True,
-            "user.history.delete": True,
-            "user.self.enable": True,
-            "user.disable.self": True,
-        }
-
-        # 4. Persist
-        user = await repo.create(user_dict)
+        user = await AuthService(db).register_user(user_data)
         logger.info(f"[{req_id}] New user registered: {user.email}")
-
         return UserResponse.model_validate(user)
 
     except HTTPException:
@@ -267,66 +189,82 @@ async def signup(
 # ============================================================================
 # POST /basic_auth/logout
 # ============================================================================
+ 
+
 @router.post(
     "/logout",
     status_code=status.HTTP_200_OK,
     summary="Logout",
-    description="Revoke refresh token in Redis and clear cookies. Idempotent.",
+    description="Revoke refresh + access tokens and clear cookies. Idempotent.",
 )
 async def logout(
     request: Request,
     res: Response,
+    refresh_token_body: Optional[str] = Body(None, embed=True, alias="refresh_token"),
     cookie_auth: Optional[str] = Depends(cookie_scheme),
     refresh_auth: Optional[str] = Depends(refresh_cookie_scheme),
+    bearer: Optional[HTTPAuthorizationCredentials] = Depends(oauth2_scheme),
 ):
-    """
-    Logout for cookie-based login.
-
-    1. Revokes the refresh token in Redis (server-side kill).
-    2. Clears the access + refresh cookies.
-
-    Idempotent — safe to call repeatedly.
-    """
     req_id = getattr(request.state, "request_id", "-")
 
-    # ---- Revoke refresh token server-side ----
-    if refresh_auth:
+    # -------- 1. Pick the refresh token from body → cookie --------
+    refresh_value = refresh_token_body or refresh_auth
+
+    # -------- 2. Pick the access token from header → cookie --------
+    access_value = bearer.credentials if bearer else cookie_auth
+
+    revoked_any = False
+
+    # -------- 3. Revoke refresh (kills rotation family too) --------
+    if refresh_value:
         try:
-            payload = decode_jwt_ignore_expiry(refresh_auth)
-            jti = payload.get("jti") if payload else None
-            exp = payload.get("exp") if payload else None
-            if jti:
-                ttl = (
-                    max(int(exp - datetime.now(timezone.utc).timestamp()), 1)
-                    if exp
-                    else settings.REFRESH_TOKEN_TTL_SECONDS
-                )
-                await token_store.revoke_refresh(jti, ttl)
-                logger.info(f"[{req_id}] Revoked refresh token: {jti}")
-            else:
-                logger.debug(f"[{req_id}] Logout: refresh token missing jti")
-        except HTTPException:
-            logger.debug(f"[{req_id}] Logout: refresh token already invalid/expired")
+            if await AuthService(db=None).revoke_session(refresh_value):
+                revoked_any = True
+                logger.info(f"[{req_id}] Revoked refresh token during logout")
         except Exception:
-            # Redis down. For security, fail the logout — the client
-            # should retry. Silently succeeding would leave a live token
-            # on the server after the user thinks they logged out.
-            logger.exception(f"[{req_id}] Logout revocation failed")
+            logger.exception(f"[{req_id}] Logout refresh revocation failed")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Logout unavailable, please retry",
             )
+    elif access_value:
+        # Bearer client sent only the access token — no refresh token in
+        # body or cookie. We still need to make sure their stored refresh
+        # token can't mint new sessions. Log out everywhere for this user.
+        payload = decode_jwt_ignore_expiry(access_value)
+        user_id = payload.get("user_id") if payload else None
+        if user_id:
+            try:
+                n = await AuthService(db=None).revoke_all_sessions_for_user(user_id)
+                if n > 0:
+                    revoked_any = True
+                logger.info(
+                    f"[{req_id}] Logout-everywhere for user {user_id} "
+                    f"— revoked {n} refresh families"
+                )
+            except Exception:
+                logger.exception(f"[{req_id}] Logout-everywhere failed")
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Logout unavailable, please retry",
+                )
 
-    # ---- Nothing to do ----
-    if not cookie_auth and not refresh_auth:
-        logger.info(f"[{req_id}] Logout called with no active session cookies")
-        return {
-            "status": "success",
-            "message": "Already logged out",
-            "already_logged_out": True,
-        }
+    # -------- 4. Revoke access token jti (immediate kill) --------
+    if access_value:
+        payload = decode_jwt_ignore_expiry(access_value)
+        if payload:
+            jti = payload.get("jti")
+            exp = payload.get("exp")
+            if jti:
+                ttl = max(int(exp - datetime.now(timezone.utc).timestamp()), 1) if exp else 3600
+                try:
+                    await token_store.blocklist_access(jti, ttl)
+                    revoked_any = True
+                    logger.info(f"[{req_id}] Blocklisted access token during logout")
+                except Exception:
+                    logger.exception(f"[{req_id}] Access blocklist failed (non-fatal)")
 
-    # ---- Clear cookies ----
+    # -------- 5. Clear cookies regardless --------
     if cookie_auth:
         res.delete_cookie(key="CSO", path="/", domain=None)
     if refresh_auth:
@@ -336,5 +274,9 @@ async def logout(
             domain=None,
         )
 
-    logger.info(f"[{req_id}] User logged out (cookies cleared)")
+    if not revoked_any:
+        logger.info(f"[{req_id}] Logout called with no active tokens")
+        return {"status": "success", "message": "Already logged out", "already_logged_out": True}
+
+    logger.info(f"[{req_id}] User logged out")
     return {"status": "success", "message": "Logged out successfully"}

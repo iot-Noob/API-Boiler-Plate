@@ -50,7 +50,8 @@ class KillSwitchMiddleware(BaseHTTPMiddleware):
 
             # 2. Auto kill (Redis-backed, multi-worker safe)
             try:
-                until_raw = await redis_client.client.get(self.AUTO_KILL_KEY)
+                c = await redis_client.ensure_connected()
+                until_raw = await c.get(self.AUTO_KILL_KEY)
                 if until_raw:
                     until = float(until_raw)
                     if time.time() < until:
@@ -84,7 +85,8 @@ class KillSwitchMiddleware(BaseHTTPMiddleware):
             # Set auto-kill in Redis with TTL (atomic, shared across workers)
             try:
                 until = time.time() + self.recovery_seconds
-                await redis_client.client.setex(
+                c = await redis_client.ensure_connected()
+                await c.setex(
                     self.AUTO_KILL_KEY,
                     self.recovery_seconds,
                     str(until),

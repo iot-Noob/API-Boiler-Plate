@@ -18,3 +18,9 @@ def blocklist_at_key(jti: str) -> str:
 
 def login_attempts_key(email: str, ip: str) -> str:
     return f"login_attempts:{email}:{ip}"
+
+def user_families_key(user_id: int) -> str:
+    return f"user_families:{user_id}"
+
+def user_families_key(user_id: int) -> str:
+    return f"user_families:{user_id}"
