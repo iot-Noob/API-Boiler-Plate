@@ -14,17 +14,48 @@ class BodySizeLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.max_size = parse_size(max_size) if isinstance(max_size, (str, int)) else int(max_size)
 
+    # async def dispatch(self, request: Request, call_next):
+    #     content_length = request.headers.get("content-length")
+    #     if content_length is not None:
+    #         try:
+    #             length_value = int(content_length)
+    #             max_size = int(self.max_size)
+    #             if length_value > max_size:
+    #                 logger.warning(
+    #                     f"Request body too large: {format_size(length_value)} "
+    #                     f"> {format_size(max_size)} path={request.url.path}"
+    #                 )
+    #                 return JSONResponse(
+    #                     status_code=413,
+    #                     content={
+    #                         "error": "Request body too large",
+    #                         "max_bytes": max_size,
+    #                         "max_human": format_size(max_size),
+    #                     },
+    #                 )
+    #         except (TypeError, ValueError):
+    #             return JSONResponse(
+    #                 status_code=400,
+    #                 content={"error": "Invalid Content-Length header"},
+    #             )
+    #     return await call_next(request)
+
     async def dispatch(self, request: Request, call_next):
         content_length = request.headers.get("content-length")
+        transfer_encoding = request.headers.get("transfer-encoding", "").lower()
+
+        # Reject chunked bodies outright unless you need to support them
+        if "chunked" in transfer_encoding:
+            return JSONResponse(
+                status_code=413,
+                content={"error": "Chunked transfer encoding not supported"},
+            )
+
         if content_length is not None:
             try:
                 length_value = int(content_length)
                 max_size = int(self.max_size)
                 if length_value > max_size:
-                    logger.warning(
-                        f"Request body too large: {format_size(length_value)} "
-                        f"> {format_size(max_size)} path={request.url.path}"
-                    )
                     return JSONResponse(
                         status_code=413,
                         content={

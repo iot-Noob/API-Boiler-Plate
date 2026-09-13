@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator,ConfigDict
 from typing import Optional, Dict,List
 from enum import Enum
 from App.api.dependencies.permissions import Permission
@@ -15,13 +15,12 @@ class PermissionModel(BaseModel):
         ..., 
         description="User ID to assign permissions to",
         gt=0,
-        example=123
+        json_schema_extra={"example": 123},
     )
-    
     permissions: Dict[str, bool] = Field(
         ...,
         description="User permissions dict (permission name: True/False)",
-        example={"user.view.self": True, "user.update.self": False, "user.delete.self": False}
+        json_schema_extra={"example": {"user.view.self": True, "user.update.self": False, "user.delete.self": False}},
     )
     
     @field_validator("permissions")
@@ -64,10 +63,12 @@ class BulkPermissionModel(BaseModel):
     all_user_permissions: List[PermissionModel] = Field(
         ...,
         description="List of user permissions to update",
-        example=[
-            {"user_id": 1, "permissions": {"user.update.self": True, "user.update.email": True}},
-            {"user_id": 2, "permissions": {"user.view.any": True, "user.enable": False}},
-        ]
+        json_schema_extra={
+            "example": [
+                {"user_id": 1, "permissions": {"user.update.self": True, "user.update.email": True}},
+                {"user_id": 2, "permissions": {"user.view.any": True, "user.enable": False}},
+            ]
+        },
     )
     
     @field_validator("all_user_permissions")
@@ -84,16 +85,13 @@ class BulkPermissionModel(BaseModel):
 
 class UserPermissionsResponse(BaseModel):
     """Response model for user permissions."""
+    model_config = ConfigDict(from_attributes=True)
     
     user_id: int
     user_email: str
     user_name: str
     permissions: Dict[str, bool]
     tier: Optional[str] = None
-    
-    class Config:
-        from_attributes = True
-
 class RemovePermissionsModel(BaseModel):
     user_id: int = Field(..., description="User ID")
     permission_keys: Optional[List[str]] = Field(
