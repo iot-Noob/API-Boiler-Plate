@@ -109,10 +109,8 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
         )
 
     # ---------- helpers ----------
-
     def _is_exempt(self, path: str) -> bool:
-        return any(path == p or path.startswith(p + "/") or path == p for p in self.EXEMPT_PATHS) \
-            or path in self.EXEMPT_PATHS
+        return any(path == p or path.startswith(p + "/") for p in self.EXEMPT_PATHS)
 
     def _get_limit(self, method: str, path: str) -> Tuple[int, int]:
         """Longest-prefix match against PER_ENDPOINT. Falls back to default."""

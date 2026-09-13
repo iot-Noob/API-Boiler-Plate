@@ -16,6 +16,41 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore"
     )
+
+    # MinIO / S3 Configuration
+    MINIO_ENDPOINT: str = Field(
+        default="localhost:9000",
+        description="MinIO server endpoint (host:port, no scheme)",
+    )
+    MINIO_ACCESS_KEY: str = Field(
+        default="",
+        description="MinIO access key (the app user, NOT root)",
+    )
+    MINIO_SECRET_KEY: SecretStr = Field(
+        default=SecretStr(""),
+        description="MinIO secret key",
+    )
+    MINIO_SECURE: bool = Field(
+        default=False,
+        description="Use HTTPS when connecting to MinIO",
+    )
+    MINIO_DEFAULT_BUCKET: str = Field(
+        default="uploads",
+        description="Default bucket used when none is specified",
+    )
+    MINIO_PRESIGN_EXPIRY_SEC: int = Field(
+        default=3600,
+        ge=60,
+        le=604800,  # 7 days max
+        description="Presigned URL expiry in seconds",
+    )
+    MINIO_MAX_POOL_CONNECTIONS: int = Field(
+        default=20,
+        ge=1,
+        le=200,
+        description="Max threads used by the MinIO threadpool wrapper",
+    )
+
     COOKIE_SECURE: bool = Field(
         default=True,
         description="Whether to set the 'Secure' flag on cookies"
@@ -162,7 +197,10 @@ class Settings(BaseSettings):
         le=131072,
         description="Memory cost for Argon2 hashing"
     )
-    
+    MINIO_CA_BUNDLE: Optional[str] = Field(
+    default=None,
+    description="Path to CA bundle for MinIO TLS verification",
+)
     PARALLELISM: int = Field(
         default=2,
         ge=1,
@@ -295,6 +333,19 @@ class Settings(BaseSettings):
             "pool_recycle": self.DATABASE_POOL_RECYCLE,
             "pool_timeout": self.DATABASE_POOL_TIMEOUT,
         }
+    @field_validator("MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", mode="before")
+    @classmethod
+    def validate_minio_credentials(cls, v, info):
+        """In production, MinIO credentials must be set."""
+        env = os.getenv("ENVIRONMENT", "development")
+        if env == "production":
+            if v is None or v == "":
+                raise ValueError(f"{info.field_name} must be set in production")
+        return v
 
+    @property
+    def minio_secret_str(self) -> str:
+        """Get MinIO secret as string (use carefully)."""
+        return self.MINIO_SECRET_KEY.get_secret_value()
 # Create singleton instance
 settings = Settings()

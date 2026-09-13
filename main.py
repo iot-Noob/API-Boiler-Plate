@@ -31,6 +31,7 @@ from App.middleware.rate_limit_middleware import GlobalRateLimitMiddleware
 from App.middleware.kill_switch_middleware import KillSwitchMiddleware
 from App.middleware.body_size_middleware import BodySizeLimitMiddleware
 from App.middleware.request_id_middleware import RequestIDMiddleware
+from App.services.minio_service import minio_service
 
 logger = get_core_logger(__name__)
 
@@ -57,9 +58,19 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Redis unavailable during startup; continuing in degraded mode")
         logger.warning("App started in degraded mode without Redis")
+    try:
+        minio_service.connect()
+        health = await minio_service.health_check()
+        if health["connected"]:
+            logger.info("MinIO connected")
+        else:
+            logger.warning(f"MinIO unreachable at startup: {health.get('error')}")
+    except Exception:
+        logger.exception("MinIO init failed; object storage may be unavailable")
     yield
 
     # Graceful shutdown: close DB pool then Redis
+    minio_service.disconnect()
     await database.disconnect()
     await redis_client.disconnect()
     logger.info("App stopped")

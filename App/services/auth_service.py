@@ -144,7 +144,10 @@ class AuthService:
         try:
             await token_store.revoke_refresh(jti, ttl)
             if family:
-                await token_store.revoke_family(family)
+                await token_store.revoke_family(
+                    family,
+                    revoke_ttl=settings.REFRESH_TOKEN_TTL_SECONDS,
+                )
                 # Remove from user's tracking set — this family is now dead
                 if user_id:
                     await token_store.forget_family_for_user(user_id, family)
@@ -168,7 +171,10 @@ class AuthService:
         try:
             families = await token_store.get_user_families(user_id)
             for fam in families:
-                await token_store.revoke_family(fam)
+                await token_store.revoke_family(
+                    fam,
+                    revoke_ttl=settings.REFRESH_TOKEN_TTL_SECONDS,
+                )
             # Clear the tracking set itself
             await token_store.clear_user_families(user_id)
 

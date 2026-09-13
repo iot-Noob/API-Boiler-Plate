@@ -11,7 +11,6 @@ from contextlib import asynccontextmanager
 import logging
 from tenacity import retry, stop_after_attempt, wait_exponential
 from fastapi import HTTPException, status
-
 from App.core.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -52,10 +51,10 @@ class Database:
                 self.db_url,
                 echo=settings.DATABASE_ECHO if hasattr(settings, 'DATABASE_ECHO') else False,
                 poolclass=AsyncAdaptedQueuePool,
-                pool_size=pool_params["pool_size"],
-                max_overflow=pool_params["max_overflow"],
-                pool_recycle=pool_params["pool_recycle"],
-                pool_timeout=pool_params["pool_timeout"],
+                pool_size=settings.DATABASE_POOL_SIZE,
+                max_overflow=settings.DATABASE_MAX_OVERFLOW,
+                pool_recycle=settings.DATABASE_POOL_RECYCLE,
+                pool_timeout=settings.DATABASE_POOL_TIMEOUT,
                 pool_pre_ping=True,
                 connect_args={
                     "server_settings": {
