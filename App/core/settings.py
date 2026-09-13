@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     
     DATABASE_PORT: str = Field(
         default="5432",
-        pattern="^\d+$",
+        pattern=r"^\d+$",
         description="PostgreSQL port"
     )
     
